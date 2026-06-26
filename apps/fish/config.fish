@@ -28,11 +28,16 @@ end
 # First iTerm2 window after reboot: no server -> start one, attach to `main`
 # (continuum-restore fires here). Subsequent windows: server is up, so spawn a
 # fresh independent session per window for parallel layouts.
+#
+# Deliberately NOT `exec`: replacing fish with tmux means detaching (or the
+# session exiting) tears down the only process in the window, so iTerm closes
+# it. Running tmux as a child instead drops you back to a fish prompt on
+# detach and keeps the window open.
 if status is-interactive; and not set -q TMUX; and command -q tmux
     if tmux has-session 2>/dev/null
-        exec tmux new-session
+        tmux new-session
     else
-        exec tmux new-session -A -s main
+        tmux new-session -A -s main
     end
 end
 
@@ -424,5 +429,3 @@ end
 
 fish_add_path $HOME/go/bin
 
-# claude-guard: ~/.local/bin on PATH
-fish_add_path --move "$HOME/.local/bin"
