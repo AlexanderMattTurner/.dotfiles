@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, master]
 
+# Read-only checks, but push+pull_request double-triggers make overlapping
+# runs on the same ref routine waste — newest run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Enforces the CLAUDE.md "Uninstall upkeep" contract: every safe_link in
 # setup.bash whose target lives in $HOME has a matching remove in uninstall.bash.
 # Test logic lives in tests/test_uninstall_roundtrip.py — pytest gives clean

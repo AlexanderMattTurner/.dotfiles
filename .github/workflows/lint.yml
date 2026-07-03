@@ -6,11 +6,27 @@ on:
   pull_request:
     branches: [main, master]
 
+# The org default GITHUB_TOKEN is read-only; the auto-fix step pushes a
+# style: commit back to the branch, so contents needs an explicit write.
+permissions:
+  contents: write
+
+# The job pushes auto-fix commits back to the branch; overlapping runs on
+# the same ref would race that push (and push+pull_request double-triggers
+# make overlap routine). Newest run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Flips bin/run-gitleaks.bash (the pre-commit gitleaks hook) from
+      # skip-on-missing to fail-on-missing for both pre-commit passes below.
+      GITLEAKS_REQUIRED: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -18,21 +34,16 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Clone claude-guard
-        run: git clone https://github.com/alexander-turner/claude-guard.git claude-guard
+      - name: Clone claude-guard (pinned)
+        # Checks out the commit in claude-guard.ref so CI validates hooks
+        # against the same claude-guard that setup.bash installs.
+        run: bash bin/clone-claude-guard.bash
 
-      - name: Download pinned gitleaks
-        env:
-          GITLEAKS_VERSION: "8.30.1"
-        run: |
-          curl -fsSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | sudo tar xz -C /usr/local/bin gitleaks
-
-      - name: Scan for committed secrets (gitleaks)
-        env:
-          GITLEAKS_REQUIRED: "1"
-        run: bin/run-gitleaks.bash
+      - name: Install pinned gitleaks (checksum-verified)
+        # Version + SHA-256 are pinned inside the script. The full-history
+        # secret scan itself runs via the pre-commit gitleaks hook below
+        # (GITLEAKS_REQUIRED is set job-wide), so no standalone scan step.
+        run: bash bin/install-gitleaks.bash
 
       - name: Install fish
         # No pre-commit hook ships a fish syntax checker; install for the local

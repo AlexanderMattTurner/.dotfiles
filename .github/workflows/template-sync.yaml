@@ -52,13 +52,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout child repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
           filter: blob:none
 
       - name: Checkout template repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: ${{ env.TEMPLATE_REPO }}
           path: _template
@@ -151,6 +151,22 @@ jobs:
           process_file() {
             local rel_path="$1"
             local template_file="_template/$rel_path"
+
+            # ── project-specific customization — Future Claudes: leave as-is ──
+            # This repo symlinks .claude/{README.md,settings.json,hooks} and
+            # .hooks/{pre-push,prepare-commit-msg} into claude-guard/ or bin/.
+            # In CI the claude-guard links dangle (repo is gitignored, not cloned),
+            # and cp through a live link would corrupt the link target. Skip any
+            # path that is, or sits under, a symlink.
+            local probe="$rel_path"
+            while [ "$probe" != "." ]; do
+              if [ -L "$probe" ]; then
+                echo "Skipped (symlink): $rel_path"
+                return
+              fi
+              probe=$(dirname "$probe")
+            done
+            # ── end project-specific customization ──
 
             # Create parent directory if needed
             local parent_dir
@@ -369,7 +385,7 @@ jobs:
           fi
 
       - name: Show diff (dry run)
-        if: inputs.dry-run == 'true' && steps.sync.outputs.has_changes == 'true'
+        if: inputs.dry-run == true && steps.sync.outputs.has_changes == 'true'
         env:
           HAS_CONFLICTS: ${{ steps.sync.outputs.has_conflicts }}
           HAS_DELETIONS: ${{ steps.sync.outputs.has_deletions }}
@@ -390,9 +406,9 @@ jobs:
           fi
 
       - name: Create Pull Request
-        if: inputs.dry-run != 'true' && (steps.sync.outputs.has_changes == 'true' || steps.sync.outputs.has_conflicts == 'true' || steps.sync.outputs.has_deletions == 'true')
+        if: inputs.dry-run != true && (steps.sync.outputs.has_changes == 'true' || steps.sync.outputs.has_conflicts == 'true' || steps.sync.outputs.has_deletions == 'true')
         id: create-pr
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.TEMPLATE_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           commit-message: "chore: sync from template repository (${{ steps.sync.outputs.template_sha_short }})"
@@ -439,7 +455,7 @@ jobs:
           labels: ${{ steps.sync.outputs.has_conflicts == 'true' && 'template-sync,needs-conflict-resolution' || 'template-sync' }}
 
       - name: Request Claude to resolve conflicts
-        if: inputs.dry-run != 'true' && (steps.sync.outputs.has_conflicts == 'true' || steps.sync.outputs.has_deletions == 'true') && steps.create-pr.outputs.pull-request-number
+        if: inputs.dry-run != true && (steps.sync.outputs.has_conflicts == 'true' || steps.sync.outputs.has_deletions == 'true') && steps.create-pr.outputs.pull-request-number
         env:
           GH_TOKEN: ${{ secrets.TEMPLATE_SYNC_TOKEN || github.token }}
           HAS_CONFLICTS: ${{ steps.sync.outputs.has_conflicts }}

@@ -70,12 +70,18 @@ else
     rm -f "$HOME/.config/fish/functions/fish_prompt.fish"
 
     echo ":: Installing fish plugins..."
-    fish <<FISH_SCRIPT
+    # Non-fatal: a network blip here must not abort the whole setup run.
+    # Everything downstream tolerates a missing tide (the tide tweaks below
+    # are already || true, and the preset prompt questions gate on
+    # tide_already_configured).
+    if ! fish <<FISH_SCRIPT; then
       curl -fsSL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
       fisher install jorgebucaran/fisher >/dev/null
 
       fisher install IlanCosman/tide@v6 >/dev/null
 FISH_SCRIPT
+        echo ":: WARN: fisher/tide install failed (network?); rerun bin/install_fish.bash to retry." >&2
+    fi
 fi
 
 # Drop `jobs` from tide's right prompt: the bundled _tide_item_jobs trips on

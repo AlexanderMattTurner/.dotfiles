@@ -39,14 +39,14 @@ bw_require_logged_in || exit 1
 bw_ensure_session || exit 1
 keychain_ensure_unlocked || exit 1 # envchain reads need the Keychain unlocked too
 
-"$BW_CMD" sync --session "$BW_SESSION" >/dev/null 2>&1 || true
+"$BW_CMD" sync >/dev/null 2>&1 || true
 folder_id=$(bw_envchain_folder_id --create)
 
 # Pre-compute existing items as `<name>\t<id>\t<password_len>` so we can
 # decide skip-vs-fill in O(1) without re-fetching per item.
 existing_items_file=$(mktemp)
 trap 'rm -f "$existing_items_file"' EXIT
-"$BW_CMD" list items --folderid "$folder_id" --session "$BW_SESSION" |
+"$BW_CMD" list items --folderid "$folder_id" |
     jq -r '.[] | [.name, .id, ((.login.password // "") | length)] | @tsv' \
         >"$existing_items_file"
 
@@ -83,7 +83,7 @@ migrate_var() {
         # bw call is checked explicitly so one item's failure doesn't
         # trip pipefail+set-e and abort the whole loop silently.
         local item_json
-        item_json=$("$BW_CMD" get item --session "$BW_SESSION" "$id" 2>/dev/null) || {
+        item_json=$("$BW_CMD" get item "$id" 2>/dev/null) || {
             echo "  FAIL   $item_name (bw get item rc=$?)"
             return 0
         }
@@ -97,7 +97,7 @@ migrate_var() {
             printf '%s' "$item_json" |
                 SECRET="$value" jq '.login.password=env.SECRET' |
                 "$BW_CMD" encode |
-                "$BW_CMD" edit item --session "$BW_SESSION" "$id" >/dev/null
+                "$BW_CMD" edit item "$id" >/dev/null
         } 2>/dev/null; then
             echo "  fill   $item_name"
         else
@@ -118,7 +118,7 @@ migrate_var() {
         SECRET="$value" jq --arg n "$item_name" --arg fid "$folder_id" \
             '.name=$n | .folderId=$fid | .login={"username":null,"password":env.SECRET,"totp":null,"uris":[]} | .notes=null' |
         "$BW_CMD" encode |
-        "$BW_CMD" create item --session "$BW_SESSION" >/dev/null
+        "$BW_CMD" create item >/dev/null
     unset value
     echo "  ok     $item_name"
 }
@@ -136,6 +136,6 @@ for ns in $(envchain --list); do
     done < <(envchain --list "$ns")
 done
 
-"$BW_CMD" sync --session "$BW_SESSION" >/dev/null
+"$BW_CMD" sync >/dev/null
 echo "Migration complete. Verify with:"
 echo "  bw list items --folderid $folder_id | jq -r '.[].name'"
