@@ -34,8 +34,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - name: Clone claude-guard
-        run: git clone https://github.com/alexander-turner/claude-guard.git claude-guard
+      - name: Clone claude-guard (pinned)
+        # Checks out the commit in claude-guard.ref so the symlink set under
+        # test matches what setup.bash installs.
+        run: bash bin/clone-claude-guard.bash
 
       - name: Run idempotency check
         env:

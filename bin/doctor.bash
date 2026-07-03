@@ -137,6 +137,25 @@ if [[ $stale_count -eq 0 ]]; then
     pass "no stale dotfiles symlinks"
 fi
 
+# ── claude-guard pin ────────────────────────────────────────────────────────
+section "claude-guard"
+
+CG_DIR="$DOTFILES_DIR/claude-guard"
+CG_REF_FILE="$DOTFILES_DIR/claude-guard.ref"
+if [[ ! -d "$CG_DIR/.git" ]]; then
+    skip "claude-guard checkout" "not cloned (run setup.bash or bin/clone-claude-guard.bash)"
+elif [[ ! -f "$CG_REF_FILE" ]]; then
+    fail "claude-guard pin" "claude-guard.ref missing from the repo"
+else
+    cg_pinned="$(<"$CG_REF_FILE")"
+    cg_head="$(git -C "$CG_DIR" rev-parse HEAD 2>/dev/null)"
+    if [[ "$cg_head" == "$cg_pinned" ]]; then
+        pass "claude-guard at pinned ref (${cg_pinned:0:7})"
+    else
+        fail "claude-guard pin" "HEAD ${cg_head:0:7} != pinned ${cg_pinned:0:7} — run bin/clone-claude-guard.bash (or --bump to move the pin)"
+    fi
+fi
+
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
 

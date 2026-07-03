@@ -46,23 +46,14 @@ DOTFILES_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DOTFILES_DIR/bin/lib/safe_link.sh"
 # shellcheck source=bin/lib/symlinks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/symlinks.sh"
+# shellcheck source=bin/lib/retry.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/retry.sh"
 
 # ── claude-guard (always run) ────────────────────────────────
-CLAUDE_GUARD_DIR="$DOTFILES_DIR/claude-guard"
-CLAUDE_GUARD_URL="https://github.com/alexander-turner/claude-guard.git"
-if [[ -d "$CLAUDE_GUARD_DIR/.git" ]]; then
-    git -C "$CLAUDE_GUARD_DIR" pull --ff-only origin main 2>/dev/null ||
-        status_msg "WARN: claude-guard pull failed (network issue or diverged branch?); using existing version."
-else
-    # An interrupted first clone can leave a non-git claude-guard/ that makes
-    # `git clone` fail on every subsequent run. The directory is a gitignored
-    # clone with no local state, so clearing the leftover is safe.
-    if [[ -e "$CLAUDE_GUARD_DIR" ]]; then
-        status_msg "Removing leftover non-git claude-guard/ from an interrupted clone..."
-        rm -rf "$CLAUDE_GUARD_DIR"
-    fi
-    git clone "$CLAUDE_GUARD_URL" "$CLAUDE_GUARD_DIR"
-fi
+# Clones/updates at the commit pinned in claude-guard.ref — the subrepo
+# carries the AI-safety monitor, so it doesn't float at origin/main.
+# Bump with: bash bin/clone-claude-guard.bash --bump
+bash "$DOTFILES_DIR/bin/clone-claude-guard.bash"
 
 # ── Symlinks (always run) ────────────────────────────────────────────────────
 status_msg "Linking dotfiles..."
@@ -102,9 +93,12 @@ fi
 # ── Package installation (skipped with --link-only) ──────────────────────────
 
 # Install Homebrew first -- many subsequent steps depend on it
+install_homebrew() {
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
+}
 if ! command_exists brew; then
     status_msg "Installing Homebrew..."
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
+    retry 3 10 install_homebrew
 fi
 
 # Always (re)load brew shellenv into this script's environment — handles
@@ -136,20 +130,8 @@ brew_quiet_install() {
 # second attempt almost always succeeds. doctor.bash at the end of setup
 # catches anything that's still missing after 3 tries.
 status_msg "Installing from Brewfile..."
-brew_ok=false
-for attempt in 1 2 3; do
-    if brew bundle --quiet --file="$DOTFILES_DIR/Brewfile"; then
-        brew_ok=true
-        break
-    fi
-    if [ "$attempt" -lt 3 ]; then
-        status_msg "brew bundle failed (attempt $attempt/3); retrying in $((attempt * 10))s..."
-        sleep $((attempt * 10))
-    fi
-done
-if [ "$brew_ok" = false ]; then
+retry 3 10 brew bundle --quiet --file="$DOTFILES_DIR/Brewfile" ||
     status_msg "WARN: brew bundle failed after 3 attempts — doctor.bash will report missing packages."
-fi
 
 # Bitwarden CLI bootstrap. Bitwarden is the cross-machine source of truth
 # for secrets; envchain is the local runtime cache. We use the personal
@@ -341,7 +323,7 @@ status_msg "Setting up tmux..."
 TPM_DIR="$HOME/.tmux/plugins/tpm"
 if [ ! -d "$TPM_DIR/.git" ]; then
     rm -rf "$TPM_DIR"
-    git clone --quiet https://github.com/tmux-plugins/tpm "$TPM_DIR" >/dev/null
+    retry 3 5 git clone --quiet https://github.com/tmux-plugins/tpm "$TPM_DIR" >/dev/null
 fi
 tmux source ~/.tmux.conf >/dev/null 2>&1 || true
 ~/.tmux/plugins/tpm/bin/install_plugins >/dev/null ||
@@ -425,9 +407,9 @@ if command_exists pnpm; then
     *":$PNPM_HOME:"*) ;;
     *) export PATH="$PNPM_HOME:$PATH" ;;
     esac
-    pnpm install -g prettier ||
+    retry 3 5 pnpm install -g prettier ||
         status_msg "WARN: 'pnpm install -g prettier' failed; formatting may be unavailable"
-    pnpm install -g @bitwarden/cli ||
+    retry 3 5 pnpm install -g @bitwarden/cli ||
         status_msg "WARN: 'pnpm install -g @bitwarden/cli' failed; rerun to get bw CLI"
 fi
 
@@ -448,7 +430,7 @@ fi
 # pnpm is configured above (PNPM_HOME + PATH), so this lands alongside the
 # other globals (claude-code, ccr, prettier, @bitwarden/cli).
 if command_exists pnpm; then
-    pnpm add --global @devcontainers/cli >/dev/null 2>&1 ||
+    retry 3 5 pnpm add --global @devcontainers/cli >/dev/null 2>&1 ||
         status_msg "WARN: 'pnpm add -g @devcontainers/cli' failed. The claude wrapper will fall back to running on the host."
 fi
 

@@ -23,11 +23,11 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
 7. Overrides `rm` in favor of the reversible `tp` (`trash-put`) command. No more accidentally permanently deleting crucial files!
 8. Installs `tmux` with the `tmux-restore` and `tmux-continuum` plugins. Basically, this means that your `tmux` sessions will be saved and restored automatically. No more losing your work when your computer crashes!
 9. Uses `mosh` as the default for `ssh` connections. Mosh provides predictive local echo (no lag on keystrokes) and seamless roaming across network changes. The fish `ssh` wrapper automatically falls back to real ssh when you use flags mosh doesn't support (port forwarding, agent forwarding, jump hosts, etc.).
-10. Installs `envchain` (OS Keychain at runtime) plus the [Bitwarden CLI](https://bitwarden.com/help/cli/) for cross-machine secret sync. API keys live encrypted in your Bitwarden vault; a background sync at shell startup pulls updates into envchain so wrappers like `npm`, `rclone`, `twine`, and `aider_redpill` stay zero-prompt at runtime.
+10. Installs `envchain` (OS Keychain at runtime) plus the [Bitwarden CLI](https://bitwarden.com/help/cli/) for cross-machine secret sync. API keys live encrypted in your Bitwarden vault; a background sync at shell startup pulls updates into envchain so wrappers like `npm`, `rclone`, `twine`, and `aider_venice` stay zero-prompt at runtime.
 11. Configures open source AI-powered development tools, with inference routed through [Venice](https://venice.ai) for end-to-end encryption between client and inference:
     - Automatic commit message generation,
     - Aider for CLI coding,
-    - VSCodium with Roo Cline extension for privacy-first AI pair programming (use also with confidential cloud computing, like via [`redpill.ai`](https://redpill.ai)),
+    - VSCodium with Roo Cline extension for privacy-first AI pair programming,
     - `claude-code-router` (`ccr`) installed via pnpm and supervised by `claude-guard/launchagents/com.turntrout.ccr.plist`, so the private Claude wrappers route through [Venice](https://venice.ai) without the daemon dying across reboots. Store your Venice API key in Bitwarden as `envchain/ai/VENICE_INFERENCE_KEY` (the standard `envchain/<namespace>/<VAR>` convention) — `bwseed` then pulls it into envchain on every machine.
     - Three Claude Code wrappers in `~/.local/bin/` (source lives in the [`claude-guard`](https://github.com/alexander-turner/claude-guard) submodule), all sharing a per-session worktree helper:
       - `claude` — routes through the dotfiles devcontainer (`.devcontainer/`) and execs with `--dangerously-skip-permissions` inside it, where the firewall + bind-mount sandbox already contain the blast radius. If the container for this workspace isn't running, prints a warning and auto-starts it via `devcontainer up`. Before exec, snapshots `/home/node/.claude` (the `claude-code-config` named volume) to `~/.cache/claude-config-backups/<ts>.tar` and keeps the last 10 — restore with `docker exec -i <id> tar -xf - -C /home/node < <snap>`. Bypasses: `CLAUDE_NO_SANDBOX=1` skips the container, `CLAUDE_NO_WORKTREE=1` skips the worktree.
@@ -115,7 +115,7 @@ Once setup has run, those chores are also reachable through the `dotfiles` dispa
 Two layers, both encrypted, complementary roles:
 
 - **Bitwarden vault** (source of truth, cross-machine). End-to-end encrypted; syncs to every device logged into your Bitwarden account. We use the personal API key flow so WebAuthn-only accounts work without 2FA prompts on `bw login`.
-- **envchain** (runtime cache, per-machine). Reads from the macOS Keychain, which is silently unlocked at GUI login — so wrappers like `npm`, `rclone`, and `aider_redpill` are zero-prompt during normal use.
+- **envchain** (runtime cache, per-machine). Reads from the macOS Keychain, which is silently unlocked at GUI login — so wrappers like `npm`, `rclone`, and `aider_venice` are zero-prompt during normal use.
 
 ### GitHub CLI auth via Bitwarden
 

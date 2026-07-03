@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, master]
 
+# The org default GITHUB_TOKEN is read-only; the auto-fix step pushes a
+# style: commit back to the branch, so contents needs an explicit write.
+permissions:
+  contents: write
+
 # The job pushes auto-fix commits back to the branch; overlapping runs on
 # the same ref would race that push (and push+pull_request double-triggers
 # make overlap routine). Newest run wins.
@@ -29,8 +34,10 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Clone claude-guard
-        run: git clone https://github.com/alexander-turner/claude-guard.git claude-guard
+      - name: Clone claude-guard (pinned)
+        # Checks out the commit in claude-guard.ref so CI validates hooks
+        # against the same claude-guard that setup.bash installs.
+        run: bash bin/clone-claude-guard.bash
 
       - name: Install pinned gitleaks (checksum-verified)
         # Version + SHA-256 are pinned inside the script. The full-history

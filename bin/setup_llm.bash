@@ -18,6 +18,20 @@ DOTFILES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 IS_MAC=false
 [[ "$(uname)" == "Darwin" ]] && IS_MAC=true
 
+# shellcheck source=lib/retry.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/retry.sh"
+# shellcheck source=lib/pnpm-pin.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/pnpm-pin.sh"
+
+# Pinned versions for the uv-installed AI CLIs. These handle prompts and
+# API keys, so they're pinned like claude-code below instead of floating
+# at latest (supply-chain hygiene over freshness). Bump: edit the pin,
+# then `uv tool install --force '<pin>'` (or rerun this script on a
+# machine that doesn't have the tool yet).
+AIDER_PIN="aider-chat==0.86.2"
+WUT_PIN="wut-cli==1.0.8"
+LLM_PIN="llm==0.31"
+
 # ── claude-code + claude-code-router (ccr) ──────────────────────────────────
 # pnpm keeps both under $PNPM_HOME, matching the path baked into
 # claude-guard/launchagents/com.turntrout.ccr.plist.
@@ -30,35 +44,15 @@ IS_MAC=false
 # cloned yet, or jq missing) so a partial bootstrap still installs something.
 if command_exists pnpm; then
     cc_pkg="$DOTFILES_DIR/claude-guard/package.json"
-    cc_spec="@anthropic-ai/claude-code"
-    ccr_spec="@musistudio/claude-code-router"
-    if [[ -f "$cc_pkg" ]] && command_exists jq; then
-        if cc_ver="$(jq -re '.devDependencies["@anthropic-ai/claude-code"]' "$cc_pkg" 2>/dev/null)"; then
-            cc_spec="@anthropic-ai/claude-code@${cc_ver}"
-        else
-            status_msg "WARN: could not read claude-code pin from $cc_pkg — installing latest"
-        fi
-        if ccr_ver="$(jq -re '.devDependencies["@musistudio/claude-code-router"]' "$cc_pkg" 2>/dev/null)"; then
-            ccr_spec="@musistudio/claude-code-router@${ccr_ver}"
-        fi
+    if ! cc_spec="$(pnpm_pin_spec "$cc_pkg" "@anthropic-ai/claude-code")"; then
+        status_msg "WARN: could not read claude-code pin from $cc_pkg — installing latest"
     fi
+    ccr_spec="$(pnpm_pin_spec "$cc_pkg" "@musistudio/claude-code-router")" || true
     status_msg "Installing ${cc_spec} + ${ccr_spec} via pnpm..."
-    # Retry transient registry/network failures (same pattern as the brew
-    # bundle loop in setup.bash). A final failure is a WARN, not an abort —
-    # setup.bash must still reach its closing doctor.bash summary, which
-    # reports the missing claude/ccr commands.
-    pnpm_ok=false
-    for attempt in 1 2 3; do
-        if pnpm add --global --reporter=append-only "$cc_spec" "$ccr_spec"; then
-            pnpm_ok=true
-            break
-        fi
-        if [ "$attempt" -lt 3 ]; then
-            status_msg "pnpm add failed (attempt $attempt/3); retrying in $((attempt * 10))s..."
-            sleep $((attempt * 10))
-        fi
-    done
-    [ "$pnpm_ok" = true ] ||
+    # Retry transient registry/network failures. A final failure is a WARN,
+    # not an abort — setup.bash must still reach its closing doctor.bash
+    # summary, which reports the missing claude/ccr commands.
+    retry 3 10 pnpm add --global --reporter=append-only "$cc_spec" "$ccr_spec" ||
         status_msg "WARN: claude-code + ccr install failed after 3 attempts — rerun bin/setup_llm.bash."
 
     CLAUDE_INSTALLER="$(pnpm root -g)/@anthropic-ai/claude-code/install.cjs"
@@ -74,8 +68,9 @@ fi
 # ── aider ───────────────────────────────────────────────────────────────────
 if command_exists uv; then
     if ! command_exists aider; then
-        status_msg "Installing aider-chat via uv..."
-        uv tool install --quiet aider-chat
+        status_msg "Installing ${AIDER_PIN} via uv..."
+        retry 3 5 uv tool install --quiet "$AIDER_PIN" ||
+            status_msg "WARN: aider install failed; rerun bin/setup_llm.bash."
     fi
     # Disable analytics before first interactive invocation prompts for it.
     aider --analytics-disable --yes --exit >/dev/null 2>&1 || true
@@ -102,8 +97,9 @@ fi
 
 # ── wut-cli ─────────────────────────────────────────────────────────────────
 if command_exists uv && ! command_exists wut; then
-    status_msg "Installing wut-cli via uv..."
-    uv tool install --quiet wut-cli
+    status_msg "Installing ${WUT_PIN} via uv..."
+    retry 3 5 uv tool install --quiet "$WUT_PIN" ||
+        status_msg "WARN: wut-cli install failed; rerun bin/setup_llm.bash."
 fi
 
 # ── Venice default_code resolver cache ──────────────────────────────────────
@@ -116,19 +112,24 @@ cache_venice_trait default_code "$VENICE_DEFAULT_CODE_FALLBACK"
 
 # ── llm CLI (ad-hoc shell prompts; unrelated to the commit-msg hook) ────────
 if command_exists uv && ! command_exists llm; then
-    status_msg "Installing llm via uv..."
-    uv tool install --quiet llm
+    status_msg "Installing ${LLM_PIN} via uv..."
+    retry 3 5 uv tool install --quiet "$LLM_PIN" ||
+        status_msg "WARN: llm install failed; rerun bin/setup_llm.bash."
 fi
 
 if command_exists llm; then
     LLM_DIR="$(dirname "$(llm logs path)")"
     mkdir -p "$LLM_DIR"
+    # Venice only (E2EE routing policy — see CLAUDE.md "AI provider
+    # routing"). The key reaches llm as OPENAI_API_KEY via the `llm` fish
+    # wrapper (envchain ai + bin/venice-openai-shim.sh); model ids match
+    # Venice's /v1/models, same catalog as apps/mods/mods.yml.
     cat >"$LLM_DIR/extra-openai-models.yaml" <<'YAML'
-- model_id: redpill-sonnet
-  model_name: anthropic/claude-sonnet-4.5
-  api_base: "https://api.redpill.ai/v1"
+- model_id: venice-sonnet
+  model_name: claude-sonnet-4-6
+  api_base: "https://api.venice.ai/api/v1"
 YAML
-    llm models default redpill-sonnet >/dev/null 2>&1 || true
+    llm models default venice-sonnet >/dev/null 2>&1 || true
 fi
 
 # ── prepare-commit-msg template hook (Venice/qwen3-coder-480b via `mods`) ──
