@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, master]
 
+# Read-only checks, but push+pull_request double-triggers make overlapping
+# runs on the same ref routine waste — newest run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Verifies setup.bash --link-only is safely re-runnable. Running it twice in
 # an isolated $HOME must produce identical symlink sets and zero "Skipping"
 # / "Overwrite?" / "backed up to" output on the second pass. doctor.bash is
