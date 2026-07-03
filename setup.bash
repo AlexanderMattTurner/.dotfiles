@@ -1,10 +1,35 @@
 #!/bin/bash
 set -euo pipefail
 
+usage() {
+    cat <<'EOF'
+usage: bash setup.bash [--link-only]
+
+  --link-only   refresh symlinks + run doctor; skip package installation
+  -h, --help    show this message
+
+With no flags, runs the full installer (Homebrew, Brewfile, launchd
+agents, AI tooling) and finishes with a doctor.bash health summary.
+EOF
+}
+
+# Validate args strictly — an unrecognized flag must not fall through to a
+# full install (brew, sudo, chsh, launchd) the caller didn't ask for.
 LINK_ONLY=false
-if [[ "${1:-}" == "--link-only" ]]; then
-    LINK_ONLY=true
-fi
+for arg in "$@"; do
+    case "$arg" in
+    --link-only) LINK_ONLY=true ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        printf 'setup.bash: unknown argument %q\n\n' "$arg" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+done
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -29,6 +54,13 @@ if [[ -d "$CLAUDE_GUARD_DIR/.git" ]]; then
     git -C "$CLAUDE_GUARD_DIR" pull --ff-only origin main 2>/dev/null ||
         status_msg "WARN: claude-guard pull failed (network issue or diverged branch?); using existing version."
 else
+    # An interrupted first clone can leave a non-git claude-guard/ that makes
+    # `git clone` fail on every subsequent run. The directory is a gitignored
+    # clone with no local state, so clearing the leftover is safe.
+    if [[ -e "$CLAUDE_GUARD_DIR" ]]; then
+        status_msg "Removing leftover non-git claude-guard/ from an interrupted clone..."
+        rm -rf "$CLAUDE_GUARD_DIR"
+    fi
     git clone "$CLAUDE_GUARD_URL" "$CLAUDE_GUARD_DIR"
 fi
 
@@ -259,14 +291,17 @@ if [ "$(uname)" = "Darwin" ]; then
     launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
 
-    # Install wally-cli for keyboard flashing
+    # Install wally-cli for keyboard flashing. Non-fatal: doctor reports it
+    # as an optional skip, so a flaky download must not abort setup here.
     if ! command_exists wally-cli && command_exists go; then
-        go install github.com/zsa/wally-cli@latest >/dev/null
+        go install github.com/zsa/wally-cli@latest >/dev/null ||
+            status_msg "WARN: 'go install wally-cli' failed; rerun setup.bash to retry."
     fi
 
-    # iTerm2 shell integration
+    # iTerm2 shell integration. Non-fatal for the same reason.
     if [ ! -f "$HOME/.iterm2_shell_integration.bash" ]; then
-        curl -fsSL https://iterm2.com/shell_integration/install_shell_integration_and_utilities.sh | bash >/dev/null
+        curl -fsSL https://iterm2.com/shell_integration/install_shell_integration_and_utilities.sh | bash >/dev/null ||
+            status_msg "WARN: iTerm2 shell integration install failed; rerun setup.bash to retry."
     fi
 
 else # Assume linux

@@ -33,6 +33,7 @@ subcommands:
   doctor     run health check (bin/doctor.bash)
   uninstall  remove \$HOME symlinks, restore backups (bin/uninstall.bash)
   link       refresh symlinks only (setup.bash --link-only)
+  setup      run the full installer (setup.bash)
   lint       run pre-commit hooks (bin/lint.bash → pre-commit run --all-files)
   help       show this message (alias: -h, --help)
 
@@ -60,6 +61,10 @@ uninstall)
 link)
     shift
     exec bash "$DOTFILES_DIR/setup.bash" --link-only "$@"
+    ;;
+setup)
+    shift
+    exec bash "$DOTFILES_DIR/setup.bash" "$@"
     ;;
 lint)
     shift

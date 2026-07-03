@@ -164,6 +164,28 @@ if $IS_MAC; then
         *) echo "  skip tailscaled launch daemon" ;;
         esac
     fi
+
+    # NOPASSWD sudoers fragment installed by setup.bash for brew-autoupdate.
+    # Leaving it behind would grant passwordless brew-as-root forever, so
+    # offer to remove it on uninstall.
+    SUDOERS_FRAGMENT="/etc/sudoers.d/brew-autoupdate"
+    if [[ -f "$SUDOERS_FRAGMENT" ]]; then
+        if $ASSUME_YES; then
+            choice=y
+        else
+            read -rp "Remove brew-autoupdate sudoers fragment? (requires sudo) (y/N) " choice
+        fi
+        case "$choice" in
+        y | Y)
+            if sudo rm -f "$SUDOERS_FRAGMENT"; then
+                echo "  removed $SUDOERS_FRAGMENT"
+            else
+                echo "  FAILED to remove $SUDOERS_FRAGMENT"
+            fi
+            ;;
+        *) echo "  skip brew-autoupdate sudoers fragment" ;;
+        esac
+    fi
 fi
 
 # Remove trash-empty cron job if present

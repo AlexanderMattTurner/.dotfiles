@@ -43,7 +43,23 @@ if command_exists pnpm; then
         fi
     fi
     status_msg "Installing ${cc_spec} + ${ccr_spec} via pnpm..."
-    pnpm add --global --reporter=append-only "$cc_spec" "$ccr_spec"
+    # Retry transient registry/network failures (same pattern as the brew
+    # bundle loop in setup.bash). A final failure is a WARN, not an abort —
+    # setup.bash must still reach its closing doctor.bash summary, which
+    # reports the missing claude/ccr commands.
+    pnpm_ok=false
+    for attempt in 1 2 3; do
+        if pnpm add --global --reporter=append-only "$cc_spec" "$ccr_spec"; then
+            pnpm_ok=true
+            break
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            status_msg "pnpm add failed (attempt $attempt/3); retrying in $((attempt * 10))s..."
+            sleep $((attempt * 10))
+        fi
+    done
+    [ "$pnpm_ok" = true ] ||
+        status_msg "WARN: claude-code + ccr install failed after 3 attempts — rerun bin/setup_llm.bash."
 
     CLAUDE_INSTALLER="$(pnpm root -g)/@anthropic-ai/claude-code/install.cjs"
     if [[ -f "$CLAUDE_INSTALLER" ]] && command_exists node; then
