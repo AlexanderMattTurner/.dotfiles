@@ -152,6 +152,22 @@ jobs:
             local rel_path="$1"
             local template_file="_template/$rel_path"
 
+            # ── project-specific customization — Future Claudes: leave as-is ──
+            # This repo symlinks .claude/{README.md,settings.json,hooks} and
+            # .hooks/{pre-push,prepare-commit-msg} into claude-guard/ or bin/.
+            # In CI the claude-guard links dangle (repo is gitignored, not cloned),
+            # and cp through a live link would corrupt the link target. Skip any
+            # path that is, or sits under, a symlink.
+            local probe="$rel_path"
+            while [ "$probe" != "." ]; do
+              if [ -L "$probe" ]; then
+                echo "Skipped (symlink): $rel_path"
+                return
+              fi
+              probe=$(dirname "$probe")
+            done
+            # ── end project-specific customization ──
+
             # Create parent directory if needed
             local parent_dir
             parent_dir=$(dirname "$rel_path")

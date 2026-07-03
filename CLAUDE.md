@@ -372,17 +372,33 @@ Reference: `bin/check-idempotency.bash` is invoked from
 via `env:`. The script defaults both to `mktemp` so it's runnable
 locally too.
 
-**Don't extract from template-synced workflows.** `template-sync.yaml`
-copies these files verbatim from the upstream template on every daily
-run, so any local edits get clobbered:
+**Be careful editing template-synced workflows.** `template-sync.yaml`
+3-way-merges each synced file against the last-synced template
+version, so local edits persist across syncs — but if upstream later
+touches the same lines, the sync opens a conflict PR with merge
+markers for manual resolution (the `@claude` auto-resolve comment it
+posts is a no-op since the `claude.yaml` workflow was removed in
+PR #112). Synced files include:
 
 - `.github/workflows/template-sync.yaml`
 - `.github/workflows/dependabot-auto-merge.yaml`
 - `.github/workflows/phone-home.yaml`
 
-The full list is in `template-sync.yaml`'s `SYNC_PATHS` env. Any
-refactor for shellcheck coverage of those scripts has to land upstream
-in `alexander-turner/claude-automation-template`.
+The full list is in `template-sync.yaml`'s `SYNC_PATHS` env.
+Substantive refactors of those scripts (e.g. for shellcheck coverage)
+should still land upstream in
+`alexander-turner/claude-automation-template` rather than accumulating
+local drift that invites conflict PRs.
+
+One deliberate local customization lives in `process_file()` inside
+`template-sync.yaml`: a guard that skips any sync path that is, or
+sits under, a symlink. This repo symlinks
+`.claude/{README.md,settings.json,hooks}` into the gitignored
+`claude-guard/` — never cloned in CI, so the links dangle and `cp`
+kills the job — and `.hooks/{pre-push,prepare-commit-msg}` into
+`bin/`, where `cp` would write *through* the live link and corrupt
+the target. The guard is fenced with "project-specific customization"
+comments so conflict resolution preserves it.
 
 ## When fixing CI failures
 
