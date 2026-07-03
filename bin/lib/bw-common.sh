@@ -60,6 +60,13 @@ bw_require_logged_in() {
 # `--passwordenv` — Node bw silently ignores `--passwordfile` and falls
 # back to an interactive prompt that crashes inquirer on piped stdin
 # ("readline was closed" on Node 20+). Env var scoped to the subprocess.
+#
+# The session key must reach bw ONLY via the exported BW_SESSION env var,
+# never as a `--session` argument — argv is readable by any same-user
+# process (`ps -eo args`), which is exactly the exposure the "secrets
+# never on argv" rule in CLAUDE.md exists to prevent. bw reads
+# BW_SESSION from the environment natively. Guarded by
+# tests/test_security_argv.py::test_bw_session_never_on_argv.
 bw_ensure_session() {
     if [ -n "${BW_SESSION:-}" ]; then
         export BW_SESSION
@@ -91,7 +98,7 @@ bw_ensure_session() {
 # shellcheck disable=SC2119  # callers intentionally invoke without args
 bw_envchain_folder_id() {
     local fid
-    fid=$("$BW_CMD" list folders --session "$BW_SESSION" |
+    fid=$("$BW_CMD" list folders |
         jq -r '.[] | select(.name=="envchain") | .id' | head -n1)
     if [ -n "$fid" ]; then
         printf '%s\n' "$fid"
@@ -104,13 +111,13 @@ bw_envchain_folder_id() {
     "$BW_CMD" get template folder |
         jq '.name="envchain"' |
         "$BW_CMD" encode |
-        "$BW_CMD" create folder --session "$BW_SESSION" |
+        "$BW_CMD" create folder |
         jq -r '.id'
 }
 
 # Return 0 if an item with the given name exists in the given folder.
 bw_item_exists() {
     local folder_id="$1" name="$2"
-    "$BW_CMD" list items --folderid "$folder_id" --session "$BW_SESSION" |
+    "$BW_CMD" list items --folderid "$folder_id" |
         jq -e --arg n "$name" '.[] | select(.name==$n)' >/dev/null
 }

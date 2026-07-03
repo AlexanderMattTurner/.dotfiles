@@ -40,7 +40,7 @@ bw_require_logged_in || exit 1
 bw_ensure_session || exit 1
 keychain_ensure_unlocked || exit 1 # envchain writes need an unlocked Keychain on macOS
 
-"$BW_CMD" sync --session "$BW_SESSION" >/dev/null 2>&1 || true
+"$BW_CMD" sync >/dev/null 2>&1 || true
 
 # shellcheck disable=SC2119  # no args = lookup-only mode
 folder_id=$(bw_envchain_folder_id) || exit 0 # nothing to seed yet
@@ -63,7 +63,7 @@ seed_one() {
     fi
     # Split bw and jq so a bw failure doesn't trip pipefail+set-e and kill
     # the whole loop silently. `|| { ... }` keeps set -e quiet either way.
-    item_json=$("$BW_CMD" get item --session "$BW_SESSION" "$id" 2>/dev/null) || {
+    item_json=$("$BW_CMD" get item "$id" 2>/dev/null) || {
         err "  FAIL   $ns/$var (bw get item rc=$?)"
         return 0
     }
@@ -80,7 +80,7 @@ seed_one() {
     unset pw item_json
 }
 
-items_json=$("$BW_CMD" list items --folderid "$folder_id" --session "$BW_SESSION")
+items_json=$("$BW_CMD" list items --folderid "$folder_id")
 count=$(printf '%s' "$items_json" | jq 'length')
 log "Seeding $count items from Bitwarden folder envchain → envchain..."
 

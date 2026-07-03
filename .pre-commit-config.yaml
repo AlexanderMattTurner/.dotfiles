@@ -119,11 +119,12 @@ repos:
 
       - id: security-argv-tests
         name: pytest tests/test_security_argv.py
-        # Regression guard: macOS Keychain secrets must not transit argv.
+        # Regression guard: secrets (Keychain values, BW_SESSION) must not
+        # transit argv anywhere under bin/.
         entry: pytest -q tests/test_security_argv.py
         language: system
         pass_filenames: false
-        files: ^(bin/lib/(secret-store|keychain)\.sh|tests/test_security_argv\.py)$
+        files: ^(bin/.*\.(bash|sh)|tests/test_security_argv\.py)$
 
       - id: gitleaks
         name: gitleaks detect
