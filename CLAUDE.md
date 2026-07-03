@@ -257,11 +257,14 @@ Code's permission prompts (no `--dangerously-skip-permissions`).
   encryption between client and inference, so prompts/outputs are not
   visible to the provider. Redpill (a weaker TEE guarantee) was fully
   removed; do not add new providers.
-- OpenAI-compatible CLIs (aider, llm) route through
-  `bin/venice-openai-shim.sh`, which remaps `VENICE_INFERENCE_KEY` onto
-  `OPENAI_API_KEY`/`OPENAI_API_BASE`. The `aider_venice` and `llm` fish
-  functions wrap it in `envchain ai`; `bin/setup_llm.bash` writes llm's
-  `extra-openai-models.yaml` (default `venice-sonnet`).
+- OpenAI-compatible CLIs (aider, llm) don't read `VENICE_INFERENCE_KEY`
+  directly, so the `aider_venice` and `llm` fish functions remap it onto
+  `OPENAI_API_KEY`/`OPENAI_API_BASE` inline via `envchain ai bash -c
+  '...'` — no separate shim script for a three-var remap; the
+  assignment happens inside the `bash -c` string so the key is read at
+  runtime from envchain's environment, never expanded by fish or placed
+  on argv. `bin/setup_llm.bash` writes llm's `extra-openai-models.yaml`
+  (default `venice-sonnet`).
 - `apps/mods/mods.yml` lists Venice models only (qwen-2.5-coder,
   llama-3.3, mistral, etc.). The `mods` fish function wraps invocations
   in `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the
@@ -340,9 +343,9 @@ CLI is installed, so it can never drive an actual VPN).
   `#!/usr/bin/env bash` shebang (the macOS `/bin/sh` is bash 3.2 in
   POSIX mode, so a bash-shebang script under a `.sh` name silently lies
   about what it needs). `.sh` is reserved for `#!/bin/sh` POSIX scripts
-  (e.g. `bin/venice-openai-shim.sh`) and for sourced libraries under
-  `bin/lib/` that declare `# shellcheck shell=bash` instead of carrying
-  a shebang. The `sh-extension` pre-commit hook
+  and for sourced libraries under `bin/lib/` that declare
+  `# shellcheck shell=bash` instead of carrying a shebang. The
+  `sh-extension` pre-commit hook
   (`.pre-commit-config.yaml` → `bin/check-sh-extension.bash`) enforces
   this in CI — adding a new `.sh` file with a bash shebang fails the
   lint job.

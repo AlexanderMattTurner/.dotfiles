@@ -122,7 +122,7 @@ if command_exists llm; then
     mkdir -p "$LLM_DIR"
     # Venice only (E2EE routing policy — see CLAUDE.md "AI provider
     # routing"). The key reaches llm as OPENAI_API_KEY via the `llm` fish
-    # wrapper (envchain ai + bin/venice-openai-shim.sh); model ids match
+    # wrapper (envchain ai + an inline bash -c remap); model ids match
     # Venice's /v1/models, same catalog as apps/mods/mods.yml.
     cat >"$LLM_DIR/extra-openai-models.yaml" <<'YAML'
 - model_id: venice-sonnet

@@ -338,17 +338,19 @@ function twine
 end
 
 # Aider via Venice (E2EE — the only permitted provider; see CLAUDE.md
-# "AI provider routing"): envchain populates VENICE_INFERENCE_KEY into the
-# child process; the shim remaps it onto OPENAI_API_KEY and execs aider.
+# "AI provider routing"). envchain populates VENICE_INFERENCE_KEY into the
+# bash -c's environment; the inline remap onto OPENAI_API_KEY (what
+# aider's litellm backend reads for openai-compatible providers) happens
+# there, at runtime, so the key never touches fish variable expansion or
+# argv — no separate shim script needed for a three-var remap.
 function aider_venice
-    envchain ai env AIDER_MODEL=openai/claude-sonnet-4-6 \
-        "$DOTFILES_DIR/bin/venice-openai-shim.sh" (type -p aider) --edit-format editor-diff $argv
+    envchain ai bash -c 'OPENAI_API_KEY=$VENICE_INFERENCE_KEY OPENAI_API_BASE=https://api.venice.ai/api/v1 AIDER_MODEL=openai/claude-sonnet-4-6 exec "$0" --edit-format editor-diff "$@"' (type -p aider) $argv
 end
 
-# llm via Venice — same shim. The default model (venice-sonnet) is written
-# by bin/setup_llm.bash into llm's extra-openai-models.yaml.
+# llm via Venice — same inline remap. Default model (venice-sonnet) is
+# written by bin/setup_llm.bash into llm's extra-openai-models.yaml.
 function llm
-    envchain ai "$DOTFILES_DIR/bin/venice-openai-shim.sh" (command -s llm) $argv
+    envchain ai bash -c 'OPENAI_API_KEY=$VENICE_INFERENCE_KEY OPENAI_API_BASE=https://api.venice.ai/api/v1 exec "$0" "$@"' (command -s llm) $argv
 end
 
 # ── Bitwarden sync helpers ────────────────────────────────────────────────
