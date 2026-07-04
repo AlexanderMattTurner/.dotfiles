@@ -137,6 +137,25 @@ if [[ $stale_count -eq 0 ]]; then
     pass "no stale dotfiles symlinks"
 fi
 
+# ── claude-guard pin ────────────────────────────────────────────────────────
+section "claude-guard"
+
+CG_DIR="$DOTFILES_DIR/claude-guard"
+CG_REF_FILE="$DOTFILES_DIR/claude-guard.ref"
+if [[ ! -d "$CG_DIR/.git" ]]; then
+    skip "claude-guard checkout" "not cloned (run setup.bash or bin/clone-claude-guard.bash)"
+elif [[ ! -f "$CG_REF_FILE" ]]; then
+    fail "claude-guard pin" "claude-guard.ref missing from the repo"
+else
+    cg_pinned="$(<"$CG_REF_FILE")"
+    cg_head="$(git -C "$CG_DIR" rev-parse HEAD 2>/dev/null)"
+    if [[ "$cg_head" == "$cg_pinned" ]]; then
+        pass "claude-guard at pinned ref (${cg_pinned:0:7})"
+    else
+        fail "claude-guard pin" "HEAD ${cg_head:0:7} != pinned ${cg_pinned:0:7} — run bin/clone-claude-guard.bash (or --bump to move the pin)"
+    fi
+fi
+
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
 
@@ -202,6 +221,21 @@ for cmd in pnpm ccr aider llm wut devcontainer; do
         llm) hint="run: uv tool install llm (or bash bin/setup_llm.bash)" ;;
         wut) hint="run: uv tool install wut-cli (or bash bin/setup_llm.bash)" ;;
         devcontainer) hint="run: pnpm add -g @devcontainers/cli (or bash setup.bash) — required by claude-guard/bin/claude sandbox wrapper" ;;
+        esac
+        skip "$cmd" "$hint"
+    fi
+done
+
+# Optional formatters wired into nvim's conform.lua: xmllint comes from
+# libxml2-utils (Linux apt) / libxml2 (brew), prettier from `pnpm install -g`
+# in setup.bash. Formatting quietly degrades without them, so surface a skip.
+for cmd in xmllint prettier; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+        pass "$cmd"
+    else
+        case "$cmd" in
+        xmllint) hint="run: sudo apt-get install libxml2-utils (Linux) or brew install libxml2 (macOS)" ;;
+        prettier) hint="run: pnpm install -g prettier (or bash setup.bash)" ;;
         esac
         skip "$cmd" "$hint"
     fi
@@ -277,11 +311,13 @@ fi
 section "Brewfile"
 
 if command -v brew >/dev/null 2>&1; then
-    if (cd "$DOTFILES_DIR" && brew bundle check --no-upgrade --file=Brewfile >/dev/null 2>&1); then
+    # Single invocation — `brew bundle check` is slow, so reuse its output
+    # for the failure summary instead of running it twice.
+    if bundle_out="$(cd "$DOTFILES_DIR" && brew bundle check --no-upgrade --file=Brewfile 2>&1)"; then
         pass "all Brewfile entries installed"
     else
         # Surface the first missing entries so the user knows what to install.
-        missing_summary="$(cd "$DOTFILES_DIR" && brew bundle check --no-upgrade --file=Brewfile 2>&1 | head -3 | tr '\n' '; ')"
+        missing_summary="$(printf '%s\n' "$bundle_out" | head -3 | tr '\n' '; ')"
         fail "Brewfile" "missing entries (${missing_summary%; }) — run 'brew bundle --file=$DOTFILES_DIR/Brewfile'"
     fi
 else
@@ -336,6 +372,16 @@ if $IS_MAC; then
         fi
     else
         skip "tailscale-exit-node launch agent" "$TS_EXIT_PLIST not present"
+    fi
+
+    # brew-autoupdate's background job sudos via this NOPASSWD fragment
+    # (setup.bash renders + installs it). Skip, not fail: it needs sudo to
+    # install, so a --link-only bootstrap legitimately won't have it yet.
+    SUDOERS_FRAGMENT="/etc/sudoers.d/brew-autoupdate"
+    if [[ -f "$SUDOERS_FRAGMENT" ]]; then
+        pass "brew-autoupdate sudoers fragment installed"
+    else
+        skip "brew-autoupdate sudoers" "$SUDOERS_FRAGMENT missing (run setup.bash for unattended brew autoupdate)"
     fi
 
     HOMEBREW_TAILSCALED_PLIST="/Library/LaunchDaemons/homebrew.mxcl.tailscale.plist"

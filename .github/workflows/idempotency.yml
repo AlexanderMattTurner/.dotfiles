@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, master]
 
+# Read-only checks, but push+pull_request double-triggers make overlapping
+# runs on the same ref routine waste — newest run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Verifies setup.bash --link-only is safely re-runnable. Running it twice in
 # an isolated $HOME must produce identical symlink sets and zero "Skipping"
 # / "Overwrite?" / "backed up to" output on the second pass. doctor.bash is
@@ -28,8 +34,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - name: Clone claude-guard
-        run: git clone https://github.com/alexander-turner/claude-guard.git claude-guard
+      - name: Clone claude-guard (pinned)
+        # Checks out the commit in claude-guard.ref so the symlink set under
+        # test matches what setup.bash installs.
+        run: bash bin/clone-claude-guard.bash
 
       - name: Run idempotency check
         env:

@@ -6,6 +6,7 @@ complete -c dotfiles -f
 complete -c dotfiles -n __fish_use_subcommand -a doctor -d "Run health check"
 complete -c dotfiles -n __fish_use_subcommand -a uninstall -d "Remove \$HOME symlinks, restore backups"
 complete -c dotfiles -n __fish_use_subcommand -a link -d "Refresh symlinks only (setup.bash --link-only)"
+complete -c dotfiles -n __fish_use_subcommand -a setup -d "Run the full installer (setup.bash)"
 complete -c dotfiles -n __fish_use_subcommand -a lint -d "Run all linters"
 complete -c dotfiles -n __fish_use_subcommand -a help -d "Show usage"
 

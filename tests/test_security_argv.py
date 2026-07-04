@@ -9,6 +9,7 @@ assert the secret stays on the stdin side of the divide.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -114,6 +115,30 @@ def test_keychain_unlock_propagates_failure_exit_code(tmp_path: Path) -> None:
     # final exit code is 42 (pipefail isn't required — security is the last
     # stage). Caller can branch on it the same way the real code does.
     assert result.returncode == 42, f"expected rc=42, got rc={result.returncode}"
+
+
+def test_bw_session_never_on_argv() -> None:
+    """BW_SESSION is a live vault-decryption key; it must reach bw only via
+    the exported environment variable (which the bw CLI reads natively),
+    never as `--session <token>` argv — argv is visible to every same-user
+    process via `ps -eo args`, including the monitored model the trusted
+    monitor is supposed to contain."""
+    scripts = [
+        *(REPO / "bin").glob("*.bash"),
+        *(REPO / "bin").glob("*.sh"),
+        *(REPO / "bin" / "lib").glob("*.sh"),
+    ]
+    assert scripts, "glob found no shell scripts under bin/"
+    # Match `--session <value>` usages (flag plus an argument), not prose
+    # mentions of the flag in comments.
+    pattern = re.compile(r'--session[= ]+["\']?\$')
+    offenders = [
+        str(p.relative_to(REPO)) for p in scripts if pattern.search(p.read_text())
+    ]
+    assert not offenders, (
+        f"--session argv found in {offenders}; rely on the exported "
+        "BW_SESSION env var instead (see bw_ensure_session in bw-common.sh)"
+    )
 
 
 def test_security_quote_escapes_backslash_and_double_quote(tmp_path: Path) -> None:
