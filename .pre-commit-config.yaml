@@ -94,7 +94,12 @@ repos:
         entry: bin/check-sh-extension.bash
         language: script
         files: \.sh$
-        exclude: ^bin/lib/
+        # bin/lib/: sourced libraries, no shebang to check anyway.
+        # .github/scripts/, .hooks/lint-skills.sh: populated verbatim by
+        # template-sync from claude-automation-template, which names its own
+        # bash scripts *.sh — renaming them here would just have next week's
+        # sync recreate the .sh originals alongside the renamed .bash copies.
+        exclude: ^(bin/lib/|\.github/scripts/|\.hooks/lint-skills\.sh$)
 
       - id: no-future-import
         name: ban "from __future__" imports
