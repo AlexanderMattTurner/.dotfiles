@@ -410,28 +410,30 @@ should still land upstream in
 `alexander-turner/claude-automation-template` rather than accumulating
 local drift that invites conflict PRs.
 
-One deliberate local customization lives in `process_file()` inside
-`template-sync.yaml`: a guard that skips any sync path that is, or
-sits under, a symlink. This repo symlinks
-`.claude/{README.md,settings.json,hooks}` into the gitignored
-`claude-guard/` — never cloned in CI, so the links dangle and `cp`
-kills the job — and `.hooks/{pre-push,prepare-commit-msg}` into
-`bin/`, where `cp` would write *through* the live link and corrupt
-the target. The guard is fenced with "project-specific customization"
-comments so conflict resolution preserves it.
+This repo symlinks `.claude/{README.md,settings.json,hooks}` into the
+gitignored `claude-guard/` — never cloned in CI, so the links dangle —
+and `.hooks/{pre-push,prepare-commit-msg}` into `bin/`, where a naive
+sync `cp` would write *through* the live link and corrupt the target.
+`template-sync.sh`'s `process_file()` now skips any synced path that
+is, or sits under, a symlink generically (folded upstream into
+`alexander-turner/claude-automation-template`), so this is handled by
+the shared script, not a local patch.
 
-Local customizations to fold upstream (lessons learned; carry them into
-`alexander-turner/claude-automation-template` when resolving the next
-sync conflict PR, then drop this list):
+Local customizations that still diverge from the template (fold
+upstream when resolving the next sync conflict PR, then drop the
+bullet):
 
-- The `process_file()` symlink guard above.
 - The dry-run input fix: `inputs.dry-run` is a boolean, so step
   conditions must compare `== true` / `!= true` — comparing to the
   string `'true'` never matches, which made "dry run" dispatches open
   real PRs.
-- Full-SHA action pins in `template-sync.yaml`, `phone-home.yaml`, and
-  `dependabot-auto-merge.yaml` — the org requires SHA-pinned actions,
-  so tag-pinned template versions fail at workflow startup.
+- The `sh-extension` pre-commit hook's `exclude` pattern additionally
+  skips `.github/scripts/` and `.hooks/lint-skills.sh`: both are
+  populated verbatim by `template-sync` from files the template itself
+  names `*.sh` with a bash shebang, which this repo's own convention
+  would otherwise flag. Renaming them locally would just have the next
+  sync recreate the `.sh` originals alongside the renamed `.bash`
+  copies — this is a permanent local exemption, not a to-fold bug.
 
 ## When fixing CI failures
 
