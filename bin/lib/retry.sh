@@ -13,9 +13,10 @@ retry() {
     shift 2
     local attempt rc=0
     for ((attempt = 1; attempt <= attempts; attempt++)); do
-        if "$@"; then
-            return 0
-        fi
+        # `"$@" && return 0` (not `if "$@"; then return 0; fi`): when the
+        # then-branch of an if/fi never runs, bash resets $? to 0, so the
+        # `rc=$?` below would always see 0 instead of the real failure code.
+        "$@" && return 0
         rc=$?
         if ((attempt < attempts)); then
             echo ":: retry: '$1' failed (attempt $attempt/$attempts); retrying in $((attempt * base))s..." >&2

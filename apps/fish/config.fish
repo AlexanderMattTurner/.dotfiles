@@ -139,7 +139,7 @@ if $IS_MAC
 end
 
 function flash
-    sh "$DOTFILES_DIR/bin/keyboard_flash.bash"
+    bash "$DOTFILES_DIR/bin/keyboard_flash.bash"
 end
 
 function pytest

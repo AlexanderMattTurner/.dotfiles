@@ -92,8 +92,8 @@ jobs:
         run: bash claude-guard/tests/test-claude-hooks.bash
 
       - name: Run repo unit tests
-        # pytest is installed above but was never invoked here, so the
-        # safe_link / stale-symlink / security-argv guards ran nowhere in CI.
+        # Runs the safe_link / stale-symlink / security-argv guards, among
+        # others in tests/test_*.py.
         run: pytest tests/
 
       - name: Commit fixes if any
