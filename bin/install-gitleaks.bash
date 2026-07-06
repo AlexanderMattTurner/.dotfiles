@@ -2,10 +2,10 @@
 # install-gitleaks.bash — download the pinned gitleaks release, verify its
 # SHA-256 against the pinned checksum, and install to /usr/local/bin.
 #
-# Invoked from .github/workflows/lint.yml. Extracted here (instead of an
-# inline run: block) so shellcheck/shfmt cover it, per CLAUDE.md. The
-# checksum pin means a replaced/tampered release asset fails loudly
-# instead of being untarred as root.
+# Invoked from .github/workflows/lint.yml and phone-home.yaml. Extracted
+# here (instead of an inline run: block) so shellcheck/shfmt cover it, per
+# CLAUDE.md. The checksum pin means a replaced/tampered release asset
+# fails loudly instead of being untarred as root.
 #
 # Bumping the version: update GITLEAKS_VERSION and GITLEAKS_SHA256 together
 # — the values come from gitleaks_<ver>_checksums.txt on the release page.
