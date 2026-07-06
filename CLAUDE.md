@@ -81,6 +81,12 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   on both `ubuntu-latest` and `macos-latest`, asserts identical symlink
   set + clean doctor output. The macOS leg covers the `if [ "$(uname)"
   = "Darwin" ]` branches that Ubuntu can't.
+- `.github/workflows/uninstall.yml` — runs `tests/test_uninstall_roundtrip.py`
+  on push/PR; enforces the "Uninstall upkeep" contract below.
+- `.github/workflows/security-vulnerability-scan.yaml` — weekly; collects
+  open Dependabot/code-scanning/secret-scanning/pnpm-audit/Socket.dev
+  alerts and hands them to Claude to fix or roll up into one PR. Pairs
+  with `dependabot-auto-merge.yaml`.
 
 ## Maintenance invariants
 
@@ -396,13 +402,18 @@ locally too.
 3-way-merges each synced file against the last-synced template
 version, so local edits persist across syncs — but if upstream later
 touches the same lines, the sync opens a conflict PR with merge
-markers for manual resolution (the `@claude` auto-resolve comment it
-posts is a no-op since the `claude.yaml` workflow was removed in
-PR #112). Synced files include:
+markers for manual resolution. PR #112 deliberately removed
+`.github/workflows/claude.yaml` (the `@claude` auto-resolve responder)
+and `security-vulnerability-scan.yaml`; only the latter was added to
+`template-sync.yaml`'s `EXCLUDE_PATHS`, so a later sync
+(`bef5bfd`) silently resynced `claude.yaml` back in. It is live again
+today — if that's unwanted, add it to `EXCLUDE_PATHS` too; if it's
+wanted, this note can just be deleted. Synced files include:
 
 - `.github/workflows/template-sync.yaml`
 - `.github/workflows/dependabot-auto-merge.yaml`
 - `.github/workflows/phone-home.yaml`
+- `.github/workflows/claude.yaml`
 
 The full list is in `template-sync.yaml`'s `SYNC_PATHS` env.
 Substantive refactors of those scripts (e.g. for shellcheck coverage)

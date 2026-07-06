@@ -15,16 +15,16 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
 
    ![Compares tide theme configurations for the fish shell.](https://github.com/IlanCosman/tide/raw/assets/images/header.png)
 
-4. Installs [`zoxide`](https://github.com/ajeetdsouza/zoxide) for quick directory navigation. Once you've been to directory `dir`, just hit `j dir` to go back there.
-5. Installs `neovim` and sets it as default editor. Furthermore, sets up `LazyVim`, which is basically a full-fledged IDE.[^mini-pairs]
+3. Installs [`zoxide`](https://github.com/ajeetdsouza/zoxide) for quick directory navigation. Once you've been to directory `dir`, just hit `j dir` to go back there.
+4. Installs `neovim` and sets it as default editor. Furthermore, sets up `LazyVim`, which is basically a full-fledged IDE.[^mini-pairs]
    ![Showing off the LazyVim CLI IDE.](https://user-images.githubusercontent.com/292349/213447056-92290767-ea16-430c-8727-ce994c93e9cc.png)
 
-6. Installs a bunch of nice shortcuts, including `git` aliases (e.g. `git add` -> `ga`).
-7. Overrides `rm` in favor of the reversible `tp` (`trash-put`) command. No more accidentally permanently deleting crucial files!
-8. Installs `tmux` with the `tmux-restore` and `tmux-continuum` plugins. Basically, this means that your `tmux` sessions will be saved and restored automatically. No more losing your work when your computer crashes!
-9. Uses `mosh` as the default for `ssh` connections. Mosh provides predictive local echo (no lag on keystrokes) and seamless roaming across network changes. The fish `ssh` wrapper automatically falls back to real ssh when you use flags mosh doesn't support (port forwarding, agent forwarding, jump hosts, etc.).
-10. Installs `envchain` (OS Keychain at runtime) plus the [Bitwarden CLI](https://bitwarden.com/help/cli/) for cross-machine secret sync. API keys live encrypted in your Bitwarden vault; a background sync at shell startup pulls updates into envchain so wrappers like `npm`, `rclone`, `twine`, and `aider_venice` stay zero-prompt at runtime.
-11. Configures open source AI-powered development tools, with inference routed through [Venice](https://venice.ai) for end-to-end encryption between client and inference:
+5. Installs a bunch of nice shortcuts, including `git` aliases (e.g. `git add` -> `ga`).
+6. Overrides `rm` in favor of the reversible `tp` (`trash-put`) command. No more accidentally permanently deleting crucial files!
+7. Installs `tmux` with the `tmux-restore` and `tmux-continuum` plugins. Basically, this means that your `tmux` sessions will be saved and restored automatically. No more losing your work when your computer crashes!
+8. Uses `mosh` as the default for `ssh` connections. Mosh provides predictive local echo (no lag on keystrokes) and seamless roaming across network changes. The fish `ssh` wrapper automatically falls back to real ssh when you use flags mosh doesn't support (port forwarding, agent forwarding, jump hosts, etc.).
+9. Installs `envchain` (OS Keychain at runtime) plus the [Bitwarden CLI](https://bitwarden.com/help/cli/) for cross-machine secret sync. API keys live encrypted in your Bitwarden vault; a background sync at shell startup pulls updates into envchain so wrappers like `npm`, `rclone`, `twine`, and `aider_venice` stay zero-prompt at runtime.
+10. Configures open source AI-powered development tools, with inference routed through [Venice](https://venice.ai) for end-to-end encryption between client and inference:
     - Automatic commit message generation,
     - Aider for CLI coding,
     - VSCodium with Roo Cline extension for privacy-first AI pair programming,
@@ -37,7 +37,7 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
     By default each invocation lands in `<repo>/.worktrees/claude-<ts>` on a `claude/<ts>` branch — isolation per session, no fighting other Claude instances over the same files. Worktrees are listed in `~/.config/git/ignore`. Clean up with `git worktree remove <path> && git branch -D claude/<ts>`.
     - `wut` command to explain shell output.
     - `mods` (Charm) for piping shell output to an LLM, e.g. `<failing-cmd> 2>&1 | mods 'what broke?'`. Routes through Venice via `apps/mods/mods.yml`.
-12. Modern Unix toolkit installed via `Brewfile`:
+11. Modern Unix toolkit installed via `Brewfile`:
     - `eza` — drop-in `ls` replacement with git-aware listing and tree view; the fish `ls` function prefers it when present.
     
       ![eza directory listing with colored output and git status.](https://github.com/eza-community/eza/raw/main/docs/images/screenshots.png)
@@ -53,7 +53,7 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
     - `carapace` — universal completion engine, auto-activated for fish.
     - `shfmt` — shell formatter, also enforced in CI.
 
-13. Project plumbing for AI agents in this repo:
+12. Project plumbing for AI agents in this repo:
     - `AGENTS.md` symlinks to `CLAUDE.md` so Cursor/Aider/OpenCode pick up the same project context Claude Code uses.
     - `.mcp.json` configures the filesystem MCP server scoped to `~/.dotfiles` for Claude Code sessions in this repo.
     - `.claude/hooks/notify.bash` fires cross-platform desktop notifications when Claude Code needs input.
@@ -61,9 +61,9 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
     - `.claude/hooks/statusline.bash` shows model, branch, context usage, and session cost in the Claude Code status line.
     - **Push notifications** for monitor alerts: run `bash bin/setup-ntfy.bash` to configure [ntfy.sh](https://ntfy.sh) — the monitor sends a push to your phone on ASK-tier escalations (potential misalignment). Session startup reminds you if not configured.
 
-14. macOS keyboard-driven WM: `aerospace` for tiling.
+13. macOS keyboard-driven WM: `aerospace` for tiling.
 
-15. Most importantly, the `goosesay` command. A variant on the classic `cowsay` (which renders text inside a cow's speech bubble), `goosesay` goosens up your terminal just the right amount. For example:
+14. Most importantly, the `goosesay` command. A variant on the classic `cowsay` (which renders text inside a cow's speech bubble), `goosesay` goosens up your terminal just the right amount. For example:
 
 ```plaintext
 echo "Never gonna give you up" | goosesay

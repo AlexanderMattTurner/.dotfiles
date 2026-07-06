@@ -98,7 +98,8 @@ install_homebrew() {
 }
 if ! command_exists brew; then
     status_msg "Installing Homebrew..."
-    retry 3 10 install_homebrew
+    retry 3 10 install_homebrew ||
+        status_msg "WARN: Homebrew install failed after 3 attempts — rerun setup.bash."
 fi
 
 # Always (re)load brew shellenv into this script's environment — handles
@@ -191,6 +192,7 @@ if [ "$(uname)" = "Darwin" ]; then
     SUDOERS_DEST="/etc/sudoers.d/brew-autoupdate"
     if [ -f "$SUDOERS_TEMPLATE" ] && [ ! -f "$SUDOERS_DEST" ]; then
         SUDOERS_RENDERED="$(mktemp)"
+        trap 'rm -f "$SUDOERS_RENDERED"' EXIT
         sed "s/__USERNAME__/$ESCAPED_USER/g" "$SUDOERS_TEMPLATE" >"$SUDOERS_RENDERED"
         if sudo visudo -cf "$SUDOERS_RENDERED" >/dev/null; then
             sudo install -o root -g wheel -m 0440 "$SUDOERS_RENDERED" "$SUDOERS_DEST"
@@ -198,6 +200,7 @@ if [ "$(uname)" = "Darwin" ]; then
             status_msg "WARN: rendered sudoers fragment failed validation; skipping install."
         fi
         rm -f "$SUDOERS_RENDERED"
+        trap - EXIT
     fi
     brew tap homebrew/autoupdate 2>/dev/null || true
     brew autoupdate start 604800 --upgrade --cleanup --sudo >/dev/null 2>&1 || true
@@ -210,6 +213,7 @@ if [ "$(uname)" = "Darwin" ]; then
     # leaves stale provenance on the socket → CLI hits EPERM on connect.
     TAILSCALE_PLIST_DEST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
     TAILSCALE_PLIST_RENDERED="$(mktemp)"
+    trap 'rm -f "$TAILSCALE_PLIST_RENDERED"' EXIT
     sed "s/__USERNAME__/$ESCAPED_USER/g" "$DOTFILES_DIR/launchagents/com.tailscaled.plist.template" \
         >"$TAILSCALE_PLIST_RENDERED"
     needs_bootstrap=false
@@ -218,6 +222,7 @@ if [ "$(uname)" = "Darwin" ]; then
         needs_bootstrap=true
     fi
     rm -f "$TAILSCALE_PLIST_RENDERED"
+    trap - EXIT
 
     HOMEBREW_TAILSCALED_PLIST="/Library/LaunchDaemons/homebrew.mxcl.tailscale.plist"
     if [ -f "$HOMEBREW_TAILSCALED_PLIST" ]; then
@@ -263,6 +268,7 @@ if [ "$(uname)" = "Darwin" ]; then
     TS_EXIT_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
     mkdir -p "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
     TS_EXIT_PLIST_RENDERED="$(mktemp)"
+    trap 'rm -f "$TS_EXIT_PLIST_RENDERED"' EXIT
     sed "s/__USERNAME__/$ESCAPED_USER/g" \
         "$DOTFILES_DIR/launchagents/com.turntrout.tailscale-exit-node.plist.template" \
         >"$TS_EXIT_PLIST_RENDERED"
@@ -270,6 +276,7 @@ if [ "$(uname)" = "Darwin" ]; then
         install -m 0644 "$TS_EXIT_PLIST_RENDERED" "$TS_EXIT_PLIST_DEST"
     fi
     rm -f "$TS_EXIT_PLIST_RENDERED"
+    trap - EXIT
     launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
 
@@ -323,7 +330,8 @@ status_msg "Setting up tmux..."
 TPM_DIR="$HOME/.tmux/plugins/tpm"
 if [ ! -d "$TPM_DIR/.git" ]; then
     rm -rf "$TPM_DIR"
-    retry 3 5 git clone --quiet https://github.com/tmux-plugins/tpm "$TPM_DIR" >/dev/null
+    retry 3 5 git clone --quiet https://github.com/tmux-plugins/tpm "$TPM_DIR" >/dev/null ||
+        status_msg "WARN: tpm clone failed after 3 attempts — rerun setup.bash."
 fi
 tmux source ~/.tmux.conf >/dev/null 2>&1 || true
 ~/.tmux/plugins/tpm/bin/install_plugins >/dev/null ||

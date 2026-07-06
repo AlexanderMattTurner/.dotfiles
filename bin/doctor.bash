@@ -42,6 +42,8 @@ IS_MAC=false
 
 # shellcheck source=lib/symlinks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/symlinks.sh"
+# shellcheck source=lib/claude-guard-pin.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/claude-guard-pin.sh"
 
 if [[ -t 1 ]]; then
     GREEN='\033[0;32m'
@@ -142,19 +144,23 @@ section "claude-guard"
 
 CG_DIR="$DOTFILES_DIR/claude-guard"
 CG_REF_FILE="$DOTFILES_DIR/claude-guard.ref"
-if [[ ! -d "$CG_DIR/.git" ]]; then
+case "$(claude_guard_pin_status "$CG_DIR" "$CG_REF_FILE")" in
+not-cloned)
     skip "claude-guard checkout" "not cloned (run setup.bash or bin/clone-claude-guard.bash)"
-elif [[ ! -f "$CG_REF_FILE" ]]; then
+    ;;
+missing-ref)
     fail "claude-guard pin" "claude-guard.ref missing from the repo"
-else
+    ;;
+pinned)
+    cg_pinned="$(<"$CG_REF_FILE")"
+    pass "claude-guard at pinned ref (${cg_pinned:0:7})"
+    ;;
+drifted)
     cg_pinned="$(<"$CG_REF_FILE")"
     cg_head="$(git -C "$CG_DIR" rev-parse HEAD 2>/dev/null)"
-    if [[ "$cg_head" == "$cg_pinned" ]]; then
-        pass "claude-guard at pinned ref (${cg_pinned:0:7})"
-    else
-        fail "claude-guard pin" "HEAD ${cg_head:0:7} != pinned ${cg_pinned:0:7} — run bin/clone-claude-guard.bash (or --bump to move the pin)"
-    fi
-fi
+    fail "claude-guard pin" "HEAD ${cg_head:0:7} != pinned ${cg_pinned:0:7} — run bin/clone-claude-guard.bash (or --bump to move the pin)"
+    ;;
+esac
 
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
