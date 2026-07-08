@@ -227,6 +227,21 @@ if [ "$(uname)" = "Darwin" ]; then
     fi
     unset needs_bootstrap
 
+    # `brew upgrade tailscale` swaps the CLI binary but leaves the old
+    # tailscaled running under launchd. A skewed pair mishandles exit-node
+    # teardown — disconnecting blackholes all traffic. Kickstart the daemon
+    # so it respawns on the current binary. Idempotent: no-op when matched.
+    # shellcheck source=bin/lib/tailscale-resolve.sh disable=SC1091
+    source "$DOTFILES_DIR/bin/lib/tailscale-resolve.sh"
+    if ts_bin="$(find_tailscale)"; then
+        skew_msg="$(tailscale_version_skew "$ts_bin")" && skew_rc=0 || skew_rc=$?
+        if [ "$skew_rc" -ne 0 ]; then
+            status_msg "Tailscale CLI/daemon skew ($skew_msg); kickstarting daemon"
+            sudo launchctl kickstart -k "system/com.$USER.tailscaled"
+        fi
+    fi
+    unset ts_bin skew_msg skew_rc
+
     # claude-code-router (ccr): backs claude-{fast,private,think} wrappers.
     # Supervised by launchd so it's running before any wrapper invocation
     # and respawned if it crashes.

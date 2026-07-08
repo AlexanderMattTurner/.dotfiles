@@ -79,6 +79,55 @@ def test_health_classification(
     assert _run_lib(tmp_path, "tailscale_health", stdout, rc) == expected
 
 
+def _skew(
+    tmp_path: Path, client: str, daemon: str | None
+) -> subprocess.CompletedProcess[str]:
+    """Stub a tailscale CLI whose `version` and `status --json` disagree, run the check.
+
+    `daemon=None` omits the Version line so `status --json` looks unparseable
+    (the skew check must stay silent rather than false-alarm).
+    """
+    status_json = f'  "Version": "{daemon}-tdeadbeef",' if daemon is not None else ""
+    stub = tmp_path / "tailscale"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = version ]; then\n'
+        f"  echo {client}\n"
+        'elif [ "$1" = status ]; then\n'
+        f"  cat <<'TS_EOF'\n{status_json}\nTS_EOF\n"
+        "fi\n"
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    return subprocess.run(
+        ["bash", "-c", f'source "{RESOLVE_SH}" && tailscale_version_skew "$1"', "_", str(stub)],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=5,
+    )
+
+
+def test_version_skew_detected(tmp_path: Path) -> None:
+    proc = _skew(tmp_path, "1.98.8", "1.98.5")
+    assert proc.returncode == 1
+    assert "client=1.98.8" in proc.stdout
+    assert "daemon=1.98.5" in proc.stdout
+
+
+def test_version_skew_match_is_silent(tmp_path: Path) -> None:
+    proc = _skew(tmp_path, "1.98.8", "1.98.8")
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+def test_version_skew_unreadable_daemon_is_silent(tmp_path: Path) -> None:
+    # A daemon we can't probe must not be reported as skew (avoids EPERM/boot
+    # transients flapping the SwiftBar menu into the skew warning).
+    proc = _skew(tmp_path, "1.98.8", None)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
 def _lookup(code: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [

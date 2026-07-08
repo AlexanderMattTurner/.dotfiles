@@ -366,6 +366,13 @@ if $IS_MAC; then
         case "$(tailscale_health "$ts")" in
         ok | stopped)
             pass "Tailscale daemon reachable"
+            # Skewed CLI↔daemon (brew upgrade without daemon restart) has
+            # blackholed traffic on exit-node disconnect.
+            if skew="$(tailscale_version_skew "$ts")"; then
+                pass "Tailscale CLI/daemon versions match"
+            else
+                fail "Tailscale version skew" "$skew — run: sudo launchctl kickstart -k system/com.$USER.tailscaled"
+            fi
             ;;
         eperm)
             fail "Tailscale daemon" "CLI denied access to socket (run: sudo launchctl kickstart -k system/com.$USER.tailscaled)"

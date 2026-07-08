@@ -60,7 +60,18 @@ error)
     exit 0
     ;;
 esac
-# ok → show the exit-node picker below.
+# ok → check for version skew, then show the exit-node picker below.
+
+# CLI upgraded (brew) while the old daemon kept running. Disconnecting in
+# this state has blackholed all traffic, so surface it instead of the picker.
+if ! skew="$(tailscale_version_skew "$TAILSCALE")"; then
+    echo "⚠ vpn"
+    echo "---"
+    echo "version skew: $skew | font=Menlo size=11"
+    echo "disconnect/switch may blackhole traffic | font=Menlo size=11"
+    echo "Restart daemon… | shell=/usr/bin/sudo param1=launchctl param2=kickstart param3=-k param4=system/com.$USER.tailscaled terminal=true refresh=true"
+    exit 0
+fi
 
 line=$("$TAILSCALE" status 2>/dev/null | awk '/mullvad\.ts\.net.*exit node/ {print; exit}')
 host=$(awk '{print $2}' <<<"$line")

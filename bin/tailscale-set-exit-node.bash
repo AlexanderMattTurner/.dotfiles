@@ -53,6 +53,14 @@ no-daemon)
     ;;
 esac
 
+# A skewed CLI↔daemon pair (brew upgrade without a daemon restart) has
+# mishandled exit-node teardown — clearing the exit node blackholes all
+# traffic. Refuse rather than gamble with connectivity.
+if ! skew="$(tailscale_version_skew "$TAILSCALE")"; then
+    die "$target: CLI/daemon version skew ($skew) — run: sudo launchctl kickstart -k system/com.$USER.tailscaled"
+    exit 4
+fi
+
 args=(set "--exit-node=$host")
 [ -n "$host" ] && args+=(--exit-node-allow-lan-access=true)
 
