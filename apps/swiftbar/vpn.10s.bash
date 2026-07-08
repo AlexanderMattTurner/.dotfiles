@@ -60,18 +60,12 @@ error)
     exit 0
     ;;
 esac
-# ok → check for version skew, then show the exit-node picker below.
+# ok → show the exit-node picker below (with a non-blocking skew note if any).
 
-# CLI upgraded (brew) while the old daemon kept running. Disconnecting in
-# this state has blackholed all traffic, so surface it instead of the picker.
-if ! skew="$(tailscale_version_skew "$TAILSCALE")"; then
-    echo "⚠ vpn"
-    echo "---"
-    echo "version skew: $skew | font=Menlo size=11"
-    echo "disconnect/switch may blackhole traffic | font=Menlo size=11"
-    echo "Restart daemon… | shell=/usr/bin/sudo param1=launchctl param2=kickstart param3=-k param4=system/com.$USER.tailscaled terminal=true refresh=true"
-    exit 0
-fi
+# CLI upgraded (brew) while the old daemon kept running. Not the cause of the
+# disconnect blackhole (that's the macOS default-route drop the applier now
+# self-heals), but still worth a heads-up + one-tap restart in the dropdown.
+skew="$(tailscale_version_skew "$TAILSCALE")" && skew=""
 
 line=$("$TAILSCALE" status 2>/dev/null | awk '/mullvad\.ts\.net.*exit node/ {print; exit}')
 host=$(awk '{print $2}' <<<"$line")
@@ -85,6 +79,12 @@ else
     [ "$state" = active ] && echo "$flag $country" || echo "$flag $country (idle)"
 fi
 echo "---"
+
+if [ -n "$skew" ]; then
+    echo "⚠ version skew: $skew | font=Menlo size=11"
+    echo "Restart daemon… | shell=/usr/bin/sudo param1=launchctl param2=kickstart param3=-k param4=system/com.$USER.tailscaled terminal=true refresh=true"
+    echo "---"
+fi
 
 if [ -n "$host" ]; then
     printf '%s | font=Menlo size=11\nstate: %s | font=Menlo size=11\n---\n' "$host" "$state"

@@ -290,20 +290,39 @@ doctor is the real backstop, not the wrapper. We deliberately do *not*
 `brew pin tailscale`: it wouldn't stop the trigger and would freeze
 security updates on a VPN daemon.
 
-A subtler failure than the socket race: `brew upgrade tailscale` swaps
-the CLI binary but leaves the *old* `tailscaled` running under launchd.
-A skewed CLI↔daemon pair mishandles exit-node teardown — `tailscale set
---exit-node=` (the SwiftBar "Disconnect" action) clears the pref but the
-stale daemon fails to restore the default route, blackholing all
-traffic. `tailscale_version_skew` in `bin/lib/tailscale-resolve.sh`
-compares `tailscale version` against the daemon's `status --json`
-Version and is consulted by four consumers: `setup.bash` kickstarts the
-daemon on skew (self-healing every run), `doctor.bash` FAILs on it,
-`tailscale-set-exit-node.bash` refuses to disconnect rather than gamble
-with connectivity, and `vpn.10s.bash` surfaces a skew warning + restart
-item instead of the picker. It stays silent when either side is
-unreadable (EPERM/boot transients must not false-alarm). Tested in
-`tests/test_tailscale_health.py`.
+The worst failure: **clearing a Mullvad exit node blackholes all
+traffic.** `tailscale set --exit-node=` (the SwiftBar "Disconnect"
+action) tears down the tunnel's split-default routes, but the
+open-source `tailscaled` on macOS fails to re-elect the physical
+default route — macOS's `State:/Network/Global/IPv4` is left with no
+`Router`/`PrimaryInterface`, so every packet (v4 and v6) dies with
+"network is unreachable". Confirmed in `/var/log/tailscaled.stderr.log`:
+`link state: ...defaultRoute=` (empty) right after the disconnect,
+restored only by the reboot's `DefaultRoute: ""->"enX"` rebind. A
+`tailscaled` kickstart does **not** fix it — the daemon doesn't own the
+missing route; macOS SystemConfiguration does. The App Store Tailscale
+(NetworkExtension) tears down cleanly; this repo uses brew `tailscaled`,
+so we self-heal instead: `bin/tailscale-set-exit-node.bash`, on the
+disconnect path only, captures the primary interface *before* clearing
+(it's unreadable once blackholed), polls `sc_default_router` for a
+returning route, and if none comes back bounces the interface — Wi-Fi
+via `networksetup -setairportpower` (no sudo), the minimal equivalent of
+the reboot's rebind. It verifies recovery and, if it still fails, emits
+a notification + non-zero exit rather than pretending success. The
+detector reads SC state, *not* `route get default`, which reports
+success off stale utun / OrbStack `!` reject routes while offline.
+
+A separate, milder hazard: `brew upgrade tailscale` swaps the CLI binary
+but leaves the *old* `tailscaled` running (version skew). This is *not*
+the blackhole cause but is real drift. `tailscale_version_skew` in
+`bin/lib/tailscale-resolve.sh` compares `tailscale version` against the
+daemon's `status --json` Version; `setup.bash` kickstarts the daemon on
+skew (self-heals every run), `doctor.bash` FAILs on it, and both
+`tailscale-set-exit-node.bash` and `vpn.10s.bash` surface a *non-blocking*
+warning (they must not refuse to disconnect — that would only strand you
+on the exit node, and route recovery covers any teardown fallout). It
+stays silent when either side is unreadable (EPERM/boot transients must
+not false-alarm). Tested in `tests/test_tailscale_health.py`.
 
 `tailscale_health` in `bin/lib/tailscale-resolve.sh` is the single
 classifier for CLI↔daemon health (`ok` / `stopped` / `no-daemon` /
