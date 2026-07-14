@@ -29,7 +29,7 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
     - Aider for CLI coding,
     - VSCodium with Roo Cline extension for privacy-first AI pair programming,
     - `claude-code-router` (`ccr`) installed via pnpm and supervised by `claude-guard/launchagents/com.turntrout.ccr.plist`, so the private Claude wrappers route through [Venice](https://venice.ai) without the daemon dying across reboots. Store your Venice API key in Bitwarden as `envchain/ai/VENICE_INFERENCE_KEY` (the standard `envchain/<namespace>/<VAR>` convention) — `bwseed` then pulls it into envchain on every machine.
-    - Three Claude Code wrappers in `~/.local/bin/` (source lives in the [`claude-guard`](https://github.com/alexander-turner/claude-guard) submodule), all sharing a per-session worktree helper:
+    - Three Claude Code wrappers in `~/.local/bin/` (source lives in the [`claude-guard`](https://github.com/AlexanderMattTurner/agent-glovebox) submodule), all sharing a per-session worktree helper:
       - `claude` — routes through the dotfiles devcontainer (`.devcontainer/`) and execs with `--dangerously-skip-permissions` inside it, where the firewall + bind-mount sandbox already contain the blast radius. If the container for this workspace isn't running, prints a warning and auto-starts it via `devcontainer up`. Before exec, snapshots `/home/node/.claude` (the `claude-code-config` named volume) to `~/.cache/claude-config-backups/<ts>.tar` and keeps the last 10 — restore with `docker exec -i <id> tar -xf - -C /home/node < <snap>`. Bypasses: `CLAUDE_NO_SANDBOX=1` skips the container, `CLAUDE_NO_WORKTREE=1` skips the worktree.
       - `claude-private` — routes through `ccr` to Venice's current `default_code` model (E2EE between client and Venice; Anthropic only ships the CLI). `venice-resolve.bash` queries Venice at install time and caches the resolved id in `~/.cache/claude-wrappers/default_code`, so the wrapper auto-tracks Venice's catalog as models rotate. Set `CLAUDE_PRIVATE_THINK=1` to escalate to `claude-opus-4-7` for heavy reasoning. Runs on the host (ccr listens on host loopback) but still gets a fresh worktree.
       - `claude-paranoid` — same `default_code` routing as `claude-private` but *never* escalates, even with `CLAUDE_PRIVATE_THINK=1`. Use when you want a hard guarantee that no request hops to a closed-lab flagship. Also gets a per-session worktree.
@@ -144,6 +144,6 @@ Two-layer `gitleaks` gate, same `.gitleaks.toml`: pre-push scans only the commit
 
 ## Claude Code security
 
-Relatively good security. A firewalled container with minimal permissions, input sanitization, and independent AI monitor oversight. See the [`claude-guard`](https://github.com/alexander-turner/claude-guard) submodule.
+Relatively good security. A firewalled container with minimal permissions, input sanitization, and independent AI monitor oversight. See the [`claude-guard`](https://github.com/AlexanderMattTurner/agent-glovebox) submodule.
 
 [^mini-pairs]: To disable parenthesis matching, delete the `mini.pairs` plugin from `~/.local/share/nvim/lazy/LazyVim/lua/lazyvim/plugins/coding.lua`.
