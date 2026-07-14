@@ -24,7 +24,7 @@ source "$DOTFILES_DIR/bin/lib/symlinks.sh"
 
 # ── claude-guard (always run) ────────────────────────────────
 CLAUDE_GUARD_DIR="$DOTFILES_DIR/claude-guard"
-CLAUDE_GUARD_URL="https://github.com/alexander-turner/claude-guard.git"
+CLAUDE_GUARD_URL="https://github.com/AlexanderMattTurner/agent-glovebox.git"
 if [[ -d "$CLAUDE_GUARD_DIR/.git" ]]; then
     git -C "$CLAUDE_GUARD_DIR" pull --ff-only origin main 2>/dev/null || true
 else

@@ -9,7 +9,7 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   Always finishes by running `bin/doctor.bash` so the user sees a green
   health summary (or knows exactly what's still broken).
 - `claude-guard/` — cloned repo
-  (`alexander-turner/claude-guard`), `.gitignore`d.
+  (`AlexanderMattTurner/agent-glovebox`), `.gitignore`d.
   `setup.bash` clones or pulls it on every run. Contains all
   Claude Code configuration: hooks, skills, project/global settings,
   wrapper scripts, Venice/ccr routing, and the ccr LaunchAgent plist.
