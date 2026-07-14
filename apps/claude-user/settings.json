@@ -1,19 +1,10 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "theme": "dark-ansi",
-  "editorMode": "vim",
-  "skipAutoPermissionPrompt": true,
-  "effortLevel": "auto",
   "env": {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
-  },
-  "enabledPlugins": {
-    "code-simplifier@claude-plugins-official": true,
-    "plugin-dev@claude-plugins-official": true,
-    "pyright-lsp@claude-plugins-official": true
   },
   "permissions": {
     "deny": [
@@ -33,6 +24,7 @@
     ],
     "defaultMode": "auto"
   },
+  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
@@ -46,6 +38,14 @@
         ]
       }
     ]
+  },
+  "worktree": {
+    "baseRef": "fresh"
+  },
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": false,
+    "plugin-dev@claude-plugins-official": false,
+    "pyright-lsp@claude-plugins-official": true
   },
   "sandbox": {
     "enabled": true,
@@ -74,5 +74,9 @@
         "**/.env*"
       ]
     }
-  }
+  },
+  "effortLevel": "medium",
+  "theme": "auto",
+  "editorMode": "vim",
+  "skipAutoPermissionPrompt": true
 }

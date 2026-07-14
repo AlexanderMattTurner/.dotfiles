@@ -115,4 +115,5 @@
   "playwright.showTrace": false,
   "playwright.runGlobalSetupOnEachRun": false,
   "roo-cline.debug": false,
+  "git.replaceTagsWhenPull": true,
 }
