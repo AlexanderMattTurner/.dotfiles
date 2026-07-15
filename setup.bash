@@ -26,13 +26,6 @@ source "$DOTFILES_DIR/bin/lib/symlinks.sh"
 CLAUDE_GUARD_DIR="$DOTFILES_DIR/claude-guard"
 CLAUDE_GUARD_URL="https://github.com/AlexanderMattTurner/agent-glovebox.git"
 if [[ -d "$CLAUDE_GUARD_DIR/.git" ]]; then
-    # Repoint a stale origin (e.g. the pre-rename URL, which still pulls via
-    # GitHub's redirect): glovebox derives its cosign identity pin and GitHub
-    # App token scope from origin's owner/repo, so a stale name breaks both.
-    if [[ "$(git -C "$CLAUDE_GUARD_DIR" remote get-url origin 2>/dev/null)" != "$CLAUDE_GUARD_URL" ]]; then
-        status_msg "Repointing claude-guard origin to $CLAUDE_GUARD_URL..."
-        git -C "$CLAUDE_GUARD_DIR" remote set-url origin "$CLAUDE_GUARD_URL"
-    fi
     git -C "$CLAUDE_GUARD_DIR" pull --ff-only origin main 2>/dev/null || true
 else
     git clone "$CLAUDE_GUARD_URL" "$CLAUDE_GUARD_DIR"
