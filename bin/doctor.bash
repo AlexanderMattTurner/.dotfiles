@@ -162,6 +162,23 @@ drifted)
     ;;
 esac
 
+# glovebox derives its cosign identity pin and GitHub App token scope from
+# origin's owner/repo, so a non-canonical origin (e.g. a pre-rename URL that
+# still pulls via GitHub's redirect) breaks both — see claude-guard-pin.sh.
+case "$(claude_guard_origin_status "$CG_DIR")" in
+canonical)
+    pass "claude-guard origin canonical"
+    ;;
+stale)
+    cg_origin="$(git -C "$CG_DIR" remote get-url origin 2>/dev/null)"
+    fail "claude-guard origin" "$cg_origin != $CLAUDE_GUARD_CANONICAL_URL — run bin/clone-claude-guard.bash to repoint"
+    ;;
+no-origin)
+    fail "claude-guard origin" "no 'origin' remote — run bin/clone-claude-guard.bash to repoint"
+    ;;
+not-cloned) ;; # checkout skip already reported above
+esac
+
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
 

@@ -71,3 +71,102 @@ def test_drifted_when_head_differs_from_ref(tmp_path: Path) -> None:
     ref_file = tmp_path / "claude-guard.ref"
     ref_file.write_text("0" * 40 + "\n")
     assert _status(cg_dir, ref_file) == "drifted"
+
+
+CANONICAL = "https://example.invalid/new/canonical.git"
+STALE = "https://example.invalid/old/renamed.git"
+
+
+def _origin_status(cg_dir: Path) -> str:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{CLAUDE_GUARD_PIN_SH}"; '
+            f'claude_guard_origin_status "{cg_dir}" "{CANONICAL}"',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _repoint(cg_dir: Path) -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{CLAUDE_GUARD_PIN_SH}"; '
+            f'claude_guard_repoint_origin "{cg_dir}" "{CANONICAL}"',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _origin_url(cg_dir: Path) -> str:
+    return subprocess.check_output(
+        ["git", "-C", str(cg_dir), "remote", "get-url", "origin"], text=True
+    ).strip()
+
+
+def test_origin_not_cloned_when_no_git_dir(tmp_path: Path) -> None:
+    assert _origin_status(tmp_path / "claude-guard") == "not-cloned"
+
+
+def test_origin_no_origin_when_remote_absent(tmp_path: Path) -> None:
+    cg_dir = tmp_path / "claude-guard"
+    _init_repo(cg_dir)
+    assert _origin_status(cg_dir) == "no-origin"
+
+
+def test_origin_canonical_when_url_matches(tmp_path: Path) -> None:
+    cg_dir = tmp_path / "claude-guard"
+    _init_repo(cg_dir)
+    subprocess.run(
+        ["git", "remote", "add", "origin", CANONICAL], cwd=cg_dir, check=True
+    )
+    assert _origin_status(cg_dir) == "canonical"
+
+
+def test_origin_stale_when_url_differs(tmp_path: Path) -> None:
+    cg_dir = tmp_path / "claude-guard"
+    _init_repo(cg_dir)
+    subprocess.run(["git", "remote", "add", "origin", STALE], cwd=cg_dir, check=True)
+    assert _origin_status(cg_dir) == "stale"
+
+
+def test_repoint_rewrites_a_stale_origin(tmp_path: Path) -> None:
+    cg_dir = tmp_path / "claude-guard"
+    _init_repo(cg_dir)
+    subprocess.run(["git", "remote", "add", "origin", STALE], cwd=cg_dir, check=True)
+    _repoint(cg_dir)
+    assert _origin_url(cg_dir) == CANONICAL
+    assert _origin_status(cg_dir) == "canonical"
+
+
+def test_repoint_adds_origin_when_remote_absent(tmp_path: Path) -> None:
+    cg_dir = tmp_path / "claude-guard"
+    _init_repo(cg_dir)
+    _repoint(cg_dir)
+    assert _origin_url(cg_dir) == CANONICAL
+    assert _origin_status(cg_dir) == "canonical"
+
+
+def test_default_canonical_url_is_the_renamed_repo() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{CLAUDE_GUARD_PIN_SH}"; printf %s "$CLAUDE_GUARD_CANONICAL_URL"',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "https://github.com/AlexanderMattTurner/agent-glovebox.git"

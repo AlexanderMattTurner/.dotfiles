@@ -17,11 +17,12 @@ set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_GUARD_DIR="$DOTFILES_DIR/claude-guard"
-CLAUDE_GUARD_URL="https://github.com/AlexanderMattTurner/agent-glovebox.git"
 REF_FILE="$DOTFILES_DIR/claude-guard.ref"
 
 # shellcheck source=lib/retry.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/retry.sh"
+# shellcheck source=lib/claude-guard-pin.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/claude-guard-pin.sh"
 
 if [[ ! -d "$CLAUDE_GUARD_DIR/.git" ]]; then
     # An interrupted first clone can leave a non-git directory that makes
@@ -31,8 +32,17 @@ if [[ ! -d "$CLAUDE_GUARD_DIR/.git" ]]; then
         echo ":: Removing leftover non-git claude-guard/ from an interrupted clone..."
         rm -rf "$CLAUDE_GUARD_DIR"
     fi
-    retry 3 5 git clone --quiet "$CLAUDE_GUARD_URL" "$CLAUDE_GUARD_DIR"
+    retry 3 5 git clone --quiet "$CLAUDE_GUARD_CANONICAL_URL" "$CLAUDE_GUARD_DIR"
 else
+    # Self-heal a non-canonical origin before fetching. GitHub's rename
+    # redirects keep a stale URL *pulling*, but glovebox derives its cosign
+    # signer-identity pin and GitHub App token scope from origin's owner/repo
+    # — a stale name fails image verification (rebuilds locally every launch)
+    # and 422s the token mint (sandbox runs without GitHub access).
+    if [[ "$(claude_guard_origin_status "$CLAUDE_GUARD_DIR")" != canonical ]]; then
+        echo ":: Repointing claude-guard origin to $CLAUDE_GUARD_CANONICAL_URL..."
+        claude_guard_repoint_origin "$CLAUDE_GUARD_DIR"
+    fi
     git -C "$CLAUDE_GUARD_DIR" fetch --quiet origin ||
         echo ":: WARN: claude-guard fetch failed (network?); using existing objects." >&2
 fi
