@@ -33,8 +33,8 @@ if [[ ! -d "$CLAUDE_GUARD_DIR/.git" ]]; then
     fi
     retry 3 5 git clone --quiet "$CLAUDE_GUARD_URL" "$CLAUDE_GUARD_DIR"
 else
-    git -C "$CLAUDE_GUARD_DIR" fetch --quiet origin ||
-        echo ":: WARN: claude-guard fetch failed (network?); using existing objects." >&2
+    retry 3 5 git -C "$CLAUDE_GUARD_DIR" fetch --quiet origin ||
+        echo ":: WARN: claude-guard fetch failed after 3 attempts (network?); using existing objects." >&2
 fi
 
 if [[ "${1:-}" == "--bump" ]]; then

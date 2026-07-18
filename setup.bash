@@ -53,7 +53,12 @@ source "$DOTFILES_DIR/bin/lib/retry.sh"
 # Clones/updates at the commit pinned in claude-guard.ref — the subrepo
 # carries the AI-safety monitor, so it doesn't float at origin/main.
 # Bump with: bash bin/clone-claude-guard.bash --bump
-bash "$DOTFILES_DIR/bin/clone-claude-guard.bash"
+# Non-fatal: a fresh machine with a flaky network shouldn't be unable to
+# reach the closing doctor.bash summary. doctor.bash's claude-guard check
+# reports the state below (skips if never cloned, fails if drifted from the
+# pin) with the exact remediation command.
+bash "$DOTFILES_DIR/bin/clone-claude-guard.bash" ||
+    status_msg "WARN: claude-guard clone/update failed; rerun 'bash bin/clone-claude-guard.bash' — doctor.bash reports its state below."
 
 # ── Symlinks (always run) ────────────────────────────────────────────────────
 status_msg "Linking dotfiles..."
@@ -159,7 +164,8 @@ fi
 
 # GitHub CLI — install and authenticate on first login
 if ! command_exists gh; then
-    brew_quiet_install gh
+    retry 3 5 brew_quiet_install gh ||
+        status_msg "WARN: 'brew install gh' failed after 3 attempts — doctor.bash will report it missing."
 fi
 if ! gh auth status &>/dev/null; then
     if bash "$DOTFILES_DIR/bin/gh-auth-from-bw.bash" 2>/dev/null; then
@@ -183,7 +189,8 @@ if [ "$(uname)" = "Darwin" ]; then
     ESCAPED_USER="$(printf '%s' "$USER" | sed 's/[\/&]/\\&/g')"
 
     # Aerospace window manager setup (requires custom tap)
-    brew_quiet_install --cask nikitabobko/tap/aerospace
+    retry 3 5 brew_quiet_install --cask nikitabobko/tap/aerospace ||
+        status_msg "WARN: aerospace cask install failed after 3 attempts — rerun setup.bash to retry."
 
     # Brew autoupdate: update once a week (604800 seconds) with --sudo.
     # Uses a NOPASSWD sudoers fragment scoped to /opt/homebrew/bin/brew
@@ -206,7 +213,8 @@ if [ "$(uname)" = "Darwin" ]; then
     brew autoupdate start 604800 --upgrade --cleanup --sudo >/dev/null 2>&1 || true
 
     # OrbStack: lightweight Docker alternative for macOS
-    brew_quiet_install --cask orbstack
+    retry 3 5 brew_quiet_install --cask orbstack ||
+        status_msg "WARN: orbstack cask install failed after 3 attempts — rerun setup.bash to retry."
 
     # Tailscale VPN daemon — `com.$USER.tailscaled` is the sole daemon; boot
     # out homebrew's if present. Two daemons racing on /var/run/tailscaled.socket
@@ -296,19 +304,25 @@ if [ "$(uname)" = "Darwin" ]; then
 else # Assume linux
     status_msg "Installing Linux packages..."
 
-    sudo apt-get update -qq
+    retry 3 10 sudo apt-get update -qq ||
+        status_msg "WARN: apt-get update failed after 3 attempts; package installs below may fail."
     # libsecret-tools provides `secret-tool`, the Linux equivalent of macOS
     # `security` used by bin/lib/secret-store.sh for caching bw credentials.
-    sudo apt-get install -y -qq python3-pynvim pipx cron libsecret-tools
+    retry 3 10 sudo apt-get install -y -qq python3-pynvim pipx cron libsecret-tools ||
+        status_msg "WARN: apt-get install failed after 3 attempts; rerun setup.bash to retry."
 fi
 
-# Install CLI tools via uv (not in Brewfile -- they're Python packages)
+# Install CLI tools via uv (not in Brewfile -- they're Python packages).
+# retry+WARN like the other installers so a transient PyPI blip doesn't abort
+# setup before doctor.bash runs — doctor reports either tool if still missing.
 if ! command_exists trash-put; then
-    uv tool install --quiet trash-cli
+    retry 3 5 uv tool install --quiet trash-cli ||
+        status_msg "WARN: 'uv tool install trash-cli' failed after 3 attempts — doctor.bash will report trash-put missing."
 fi
 
 if command_exists uv; then
-    uv tool install --quiet pre-commit --with pre-commit-uv
+    retry 3 5 uv tool install --quiet pre-commit --with pre-commit-uv ||
+        status_msg "WARN: 'uv tool install pre-commit' failed after 3 attempts — doctor.bash will report pre-commit missing."
 fi
 
 # Clear trash which is over 30 days old, monthly
@@ -447,7 +461,8 @@ fi
 bash "$DOTFILES_DIR/bin/setup_llm.bash"
 
 if [ "$(uname)" != "Darwin" ] && ! command_exists xmllint; then
-    sudo apt-get install -y libxml2-utils
+    retry 3 10 sudo apt-get install -y libxml2-utils ||
+        status_msg "WARN: 'apt-get install libxml2-utils' failed after 3 attempts — doctor.bash will report xmllint missing."
 fi
 
 # Backup existing neovim data (only on first run — skip if .bak already exists to

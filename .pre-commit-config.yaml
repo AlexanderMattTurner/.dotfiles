@@ -101,6 +101,17 @@ repos:
         # sync recreate the .sh originals alongside the renamed .bash copies.
         exclude: ^(bin/lib/|\.github/scripts/|\.hooks/lint-skills\.sh$)
 
+      - id: lint-skills
+        name: validate Claude Code skill structure
+        # .hooks/lint-skills.sh is the template-synced validator (frontmatter,
+        # name:/description:, directory format). It shipped unwired; this hook
+        # is where it actually runs. Kept as the template's *.sh name (already
+        # exempted from sh-extension above) so upstream fixes flow in via
+        # template-sync instead of forking a local *.bash copy.
+        entry: .hooks/lint-skills.sh
+        language: script
+        files: ^\.claude/skills/.*\.md$
+
       - id: no-future-import
         name: ban "from __future__" imports
         entry: bash -c 'hits=$(grep -lE "^[[:space:]]*from __future__" "$@" || true); if [ -n "$hits" ]; then printf "remove __future__ imports — repo targets Python 3.13+:\n%s\n" "$hits" >&2; exit 1; fi' --

@@ -103,6 +103,14 @@ while IFS='|' read -r target source _label; do
     remove_dotfile_symlink "$target" "$source"
 done < <(managed_symlinks)
 
+# Bespoke, non-managed symlink: bin/install_fish.bash's accept-presets branch
+# links ~/.config/fish/functions/fish_prompt.fish into the repo (it's kept out
+# of managed_symlinks so the decline-presets `tide configure` path can write a
+# real generated prompt there). remove_dotfile_symlink no-ops on that real
+# file — it only removes the link when it actually points into this repo.
+remove_dotfile_symlink "$HOME/.config/fish/functions/fish_prompt.fish" \
+    "$DOTFILES_DIR/apps/fish/functions/fish_prompt.fish"
+
 if $IS_MAC; then
     # Unload + remove the ccr launch agent. launchctl unload is safe on a
     # missing label; we still prompt because it touches a running service.

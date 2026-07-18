@@ -271,16 +271,21 @@ Code's permission prompts (no `--dangerously-skip-permissions`).
   runtime from envchain's environment, never expanded by fish or placed
   on argv. `bin/setup_llm.bash` writes llm's `extra-openai-models.yaml`
   (default `venice-sonnet`).
-- `apps/mods/mods.yml` lists Venice models only (qwen-2.5-coder,
-  llama-3.3, mistral, etc.). The `mods` fish function wraps invocations
-  in `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the
-  Keychain.
+- `apps/mods/mods.yml` routes through Venice only (default
+  `qwen3-coder-480b-a35b-instruct-turbo`, plus `claude-sonnet-4-6`,
+  `claude-opus-4-7`, `deepseek-v4-pro`, `mistral-small-2603` — model ids
+  match Venice's `/v1/models` and rotate, so treat these as examples, not
+  a frozen list). The `mods` fish function wraps invocations in
+  `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the Keychain.
 
 ### Cross-platform
 
-- `IS_MAC=$([[ "$(uname)" == "Darwin" ]] && echo true || echo false)` is
-  the canonical detector. Linux is everything else; we don't separately
-  branch for distros, and we don't support WSL.
+- `IS_MAC=false; [[ "$(uname)" == "Darwin" ]] && IS_MAC=true` is the
+  canonical detector (see `bin/doctor.bash`, `bin/uninstall.bash`,
+  `bin/setup_llm.bash`). `setup.bash` is the exception — it never defines
+  `IS_MAC` and inlines `[ "$(uname)" = "Darwin" ]` checks directly. Linux
+  is everything else; we don't separately branch for distros, and we
+  don't support WSL.
 - Cask entries belong inside the `if OS.mac?` block in `Brewfile`. Brews
   that exist on both platforms go above it.
 - macOS-only paths in `setup.bash` (launchd agents, defaults writes,
