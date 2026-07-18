@@ -54,6 +54,17 @@ repos:
       - id: yamllint
         args: [-d, "{extends: relaxed, rules: {line-length: disable}}"]
 
+  # yamllint only checks generic YAML; actionlint understands GitHub Actions —
+  # `if:` expression types, unknown action inputs, shell-quoting in `run:`
+  # blocks (via shellcheck when present) — the class of bug yamllint can't see
+  # (e.g. the `inputs.dry-run == 'true'` string-vs-bool trap noted in CLAUDE.md).
+  # `language: golang` builds actionlint from the pinned rev using the runner's
+  # Go toolchain, so no separate install step is needed in CI.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:

@@ -76,7 +76,10 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
 - `launchagents/`, `etc/sudoers.d/` — `__USERNAME__` templates rendered
   during install.
 - `.github/workflows/lint.yml` — shellcheck + shfmt + stylua + yamllint
-  + ruff + gitleaks. Auto-fixes and pushes a `style:` commit.
+  + actionlint + ruff + gitleaks. Auto-fixes and pushes a `style:` commit.
+  (`actionlint` is GitHub-Actions-aware where yamllint is generic YAML — it
+  catches `if:` expression-type bugs, unknown action inputs, and shell
+  issues in `run:` blocks; built from a pinned rev via `language: golang`.)
 - `.github/workflows/idempotency.yml` — runs `setup.bash --link-only` twice
   on both `ubuntu-latest` and `macos-latest`, asserts identical symlink
   set + clean doctor output. The macOS leg covers the `if [ "$(uname)"
@@ -442,7 +445,8 @@ bullet):
 - The dry-run input fix: `inputs.dry-run` is a boolean, so step
   conditions must compare `== true` / `!= true` — comparing to the
   string `'true'` never matches, which made "dry run" dispatches open
-  real PRs.
+  real PRs. (The `actionlint` pre-commit hook now flags this class of
+  expression-type mismatch.)
 - The `sh-extension` pre-commit hook's `exclude` pattern additionally
   skips `.github/scripts/` and `.hooks/lint-skills.sh`: both are
   populated verbatim by `template-sync` from files the template itself
