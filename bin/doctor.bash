@@ -439,6 +439,20 @@ if $IS_MAC; then
     if [[ -e "$SHIM" ]] && ! "$SHIM" version >/dev/null 2>&1; then
         fail "tailscale shim" "$SHIM is broken (App Store Tailscale uninstalled) — sudo rm $SHIM"
     fi
+
+    # ── iTerm2 ──────────────────────────────────────────────────────────────
+    section "iTerm2"
+    if defaults read com.googlecode.iterm2 >/dev/null 2>&1; then
+        ITERM_PREFS_FOLDER="$(defaults read com.googlecode.iterm2 PrefsCustomFolder 2>/dev/null || true)"
+        ITERM_LOAD_CUSTOM="$(defaults read com.googlecode.iterm2 LoadPrefsFromCustomFolder 2>/dev/null || true)"
+        if [[ "$ITERM_LOAD_CUSTOM" == "1" && "$ITERM_PREFS_FOLDER" == "$DOTFILES_DIR/apps" ]]; then
+            pass "iTerm2 prefs loaded from repo"
+        else
+            fail "iTerm2 prefs" "not loading from $DOTFILES_DIR/apps (run setup.bash, then restart iTerm2)"
+        fi
+    else
+        skip "iTerm2 prefs" "iTerm2 not configured on this machine"
+    fi
 fi
 
 # ── Summary ─────────────────────────────────────────────────────────────────
