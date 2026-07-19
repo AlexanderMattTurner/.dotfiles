@@ -101,6 +101,17 @@ secret_set() {
     local service="$1" value="$2"
     case "$SECRET_STORE_BACKEND" in
     security)
+        # `security -i` reads commands one line at a time; a raw newline in
+        # $value would truncate it mid-command and feed the remainder back
+        # in as a new (attacker- or accident-controlled) security command.
+        # _security_quote only escapes " and \, not newlines, so refuse
+        # here rather than silently truncating/injecting.
+        case "$value" in
+        *$'\n'*)
+            echo "secret_set: value for '$service' contains a newline; the \`security -i\` protocol is line-oriented and can't embed one safely. Refusing to store it." >&2
+            return 1
+            ;;
+        esac
         printf 'add-generic-password -s %s -a %s -U -w %s\n' \
             "$(_security_quote "$service")" \
             "$(_security_quote "$USER")" \

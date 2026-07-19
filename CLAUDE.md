@@ -68,7 +68,7 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
 - `.mcp.json` — Claude Code MCP server config; currently registers the
   filesystem MCP scoped to `~/.dotfiles`.
 - `.claude/` — mostly symlinks into `claude-guard/`:
-  `settings.json`, `hooks/`, `README.md`. `.claude/skills/` is a real
+  `hooks/`, `README.md`. `.claude/skills/` is a real
   tracked directory populated by `template-sync` from the upstream template;
   any private skills from `claude-guard/skills/` must be
   individually symlinked in by `setup.bash` if needed.
@@ -429,7 +429,7 @@ should still land upstream in
 `alexander-turner/claude-automation-template` rather than accumulating
 local drift that invites conflict PRs.
 
-This repo symlinks `.claude/{README.md,settings.json,hooks}` into the
+This repo symlinks `.claude/{README.md,hooks}` into the
 gitignored `claude-guard/` — never cloned in CI, so the links dangle —
 and `.hooks/{pre-push,prepare-commit-msg}` into `bin/`, where a naive
 sync `cp` would write *through* the live link and corrupt the target.

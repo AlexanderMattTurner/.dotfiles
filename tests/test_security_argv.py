@@ -163,3 +163,34 @@ def test_security_quote_escapes_backslash_and_double_quote(tmp_path: Path) -> No
     # Stdin should contain the escaped form: \" and \\ inside double quotes.
     assert r'\"quote\"' in stdin_text, f"unexpected stdin: {stdin_text!r}"
     assert r'\\backslash' in stdin_text, f"unexpected stdin: {stdin_text!r}"
+
+
+def test_secret_set_security_backend_rejects_newline_value(tmp_path: Path) -> None:
+    """`security -i` parses one command per line, so a raw newline in the
+    value would truncate it mid-command and feed the remainder back in as a
+    new command. secret_set must refuse rather than silently truncate or
+    let the remainder execute as an injected `security -i` command."""
+    argv_log, stdin_log = _make_security_stub(tmp_path)
+    # Passed via env var, not interpolated into the bash source string:
+    # Python's repr() of an embedded "\n" prints the two-character escape
+    # "\n" (harmless inside bash single-quotes), not a real newline byte —
+    # only an env var reliably carries the actual byte through to bash.
+    smuggled = "legit-part\ndelete-generic-password -s my-service -a tester"
+
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        "DOTFILES_SECRET_BACKEND": "security",
+        "USER": "tester",
+        "SMUGGLED_VALUE": smuggled,
+    }
+    result = _bash(
+        f'source "{REPO}/bin/lib/secret-store.sh"\n'
+        'secret_set my-service "$SMUGGLED_VALUE"\n',
+        env,
+        check=False,
+    )
+
+    assert result.returncode != 0, "secret_set must fail on a newline-containing value"
+    assert not argv_log.exists(), "security must never be invoked with a truncated/injected value"
+    assert not stdin_log.exists(), "security must never be invoked with a truncated/injected value"
