@@ -24,7 +24,6 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
@@ -39,12 +38,9 @@
       }
     ]
   },
-  "worktree": {
-    "baseRef": "fresh"
-  },
   "enabledPlugins": {
-    "code-simplifier@claude-plugins-official": false,
-    "plugin-dev@claude-plugins-official": false,
+    "code-simplifier@claude-plugins-official": true,
+    "plugin-dev@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true
   },
   "sandbox": {
@@ -75,8 +71,8 @@
       ]
     }
   },
-  "effortLevel": "medium",
-  "theme": "auto",
+  "theme": "dark-ansi",
   "editorMode": "vim",
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "opus"
 }
