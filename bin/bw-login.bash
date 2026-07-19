@@ -93,8 +93,15 @@ cache_master_and_seed() {
     # 2>/dev/null hides bw's stderr (inquirer crash noise, network errors,
     # cryptography errors all look alike there) so the validation below
     # phrases the failure generically rather than claiming a specific cause.
-    BW_SESSION=$(BW_PASSWORD="$MASTER" "$BW_CMD" unlock --raw --passwordenv BW_PASSWORD 2>/dev/null)
-    local rc=$?
+    # `CMD || rc=$?` (not a plain `VAR=$(CMD)` followed by `rc=$?`): under
+    # set -e, a failing command-substitution assignment used as a bare
+    # top-level command aborts the script right there, before the check
+    # below ever runs — the friendly error message becomes dead code and
+    # the user just sees a silent exit. Putting the assignment on the left
+    # of `||` exempts it from -e (same reasoning as bin/lib/retry.sh's
+    # `"$@" && return 0` idiom).
+    local rc=0
+    BW_SESSION=$(BW_PASSWORD="$MASTER" "$BW_CMD" unlock --raw --passwordenv BW_PASSWORD 2>/dev/null) || rc=$?
     unset MASTER
     if [ "$rc" -ne 0 ] || [ -z "$BW_SESSION" ]; then
         echo "bw unlock failed (wrong password, network error, or bw binary issue). Re-run bin/bw-login.bash." >&2

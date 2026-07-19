@@ -49,8 +49,12 @@ keychain_ensure_unlocked || exit 1
 
 "$BW_CMD" sync >/dev/null 2>&1 || true
 
-# Read value into the SECRET env var. Hidden prompt on TTY, plain stdin
-# read otherwise (for piping). Exported because jq references env.SECRET.
+# Read value into the SECRET var. Hidden prompt on TTY, plain stdin read
+# otherwise (for piping). Not exported here: jq needs it as env.SECRET, but
+# only for the one jq invocation, via an inline `SECRET="$SECRET" jq ...`
+# prefix — exporting it script-wide would leak the plaintext into the
+# environment of every other child process spawned afterward (bw list
+# folders, bw create folder, bw sync, …), none of which read it.
 read_secret_into_SECRET() {
     if [ -t 0 ]; then
         printf 'Value for %s (hidden): ' "$item_name" >&2
@@ -69,7 +73,6 @@ read_secret_into_SECRET() {
         echo "Empty value; aborting." >&2
         exit 1
     }
-    export SECRET
 }
 
 # Mirror the value into envchain locally. Pipe stdin→stdin.
@@ -82,7 +85,7 @@ write_envchain() {
 create_vault_item() {
     local folder_id="$1"
     "$BW_CMD" get template item |
-        jq --arg n "$item_name" --arg fid "$folder_id" \
+        SECRET="$SECRET" jq --arg n "$item_name" --arg fid "$folder_id" \
             '.name=$n | .folderId=$fid | .login={"username":null,"password":env.SECRET,"totp":null,"uris":[]} | .notes=null' |
         "$BW_CMD" encode |
         "$BW_CMD" create item >/dev/null
@@ -100,7 +103,7 @@ update_vault_item() {
         return 1
     }
     printf '%s' "$item_json" |
-        jq '.login.password=env.SECRET' |
+        SECRET="$SECRET" jq '.login.password=env.SECRET' |
         "$BW_CMD" encode |
         "$BW_CMD" edit item "$id" >/dev/null
 }

@@ -365,7 +365,13 @@ tmux source ~/.tmux.conf >/dev/null 2>&1 || true
 
 strip_pnpm_from_shell_configs() {
     local file
-    for file in "$HOME/.bashrc" "$HOME/.zshrc" \
+    # $HOME/.bashrc is a symlink to $DOTFILES_DIR/.bashrc (managed_symlinks
+    # already relinked it earlier in this run) — editing the repo source below
+    # is sufficient. `sed -i` doesn't follow symlinks, so also listing
+    # $HOME/.bashrc here would replace the symlink with a standalone real
+    # file, silently de-tracking it (doctor.bash would then FAIL it as "not a
+    # symlink"). $HOME/.zshrc has no repo source and must be edited directly.
+    for file in "$HOME/.zshrc" \
         "$DOTFILES_DIR/apps/fish/config.fish" \
         "$DOTFILES_DIR/.bashrc"; do
         [[ -f "$file" ]] || continue
