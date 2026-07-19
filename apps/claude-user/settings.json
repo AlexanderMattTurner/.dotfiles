@@ -44,6 +44,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[^[:alnum:]_])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use the /pr-creation skill before opening a PR (it runs the compress-critique-fix loop).\"}}' || true",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },
