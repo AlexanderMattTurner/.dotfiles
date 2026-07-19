@@ -10,10 +10,16 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   health summary (or knows exactly what's still broken).
 - `claude-guard/` — cloned repo
   (`alexander-turner/claude-guard`), `.gitignore`d.
-  `setup.bash` clones or pulls it on every run. Contains all
-  Claude Code configuration: hooks, skills, project/global settings,
-  wrapper scripts, Venice/ccr routing, and the ccr LaunchAgent plist.
-  `.claude/` in this repo is symlinks into this directory.
+  `setup.bash` (via `bin/clone-claude-guard.bash`) checks it out at the
+  commit pinned in `claude-guard.ref` on every run — the subrepo carries
+  the AI-safety monitor, so it is pinned like any security-critical
+  dependency instead of floating at origin/main. Bump with
+  `bash bin/clone-claude-guard.bash --bump` and commit the ref change
+  via PR; `doctor.bash` FAILs when the checkout drifts from the pin.
+  Contains all Claude Code configuration: hooks, skills, project/global
+  settings, wrapper scripts, Venice/ccr routing, and the ccr
+  LaunchAgent plist. `.claude/` in this repo is symlinks into this
+  directory.
   - `hooks/monitor.bash` — AI safety "trusted monitor" PreToolUse hook.
     Sends each tool call to a cheap/OSS model for review before
     execution (the "AI control" pattern). Auto-detects provider from
@@ -37,8 +43,10 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   claude-code + ccr (pnpm), aider/llm/wut (uv), VSCodium + extensions,
   llm-based commit-msg template hook. claude-code + ccr are pinned to the
   versions in `claude-guard/package.json` (the canonical pin
-  `claude-guard`'s own setup + `test_claude_code_version.py` enforce), not
-  installed as unpinned `latest`. Also refreshes the Venice
+  `claude-guard`'s own setup + `test_claude_code_version.py` enforce,
+  read via `bin/lib/pnpm-pin.sh`), not installed as unpinned `latest`.
+  The uv tools are pinned too (`AIDER_PIN`/`WUT_PIN`/`LLM_PIN` at the
+  top of the script — bump there). Also refreshes the Venice
   `default_code` model cache via the subrepo's
   `bin/lib/venice-resolve.bash`. The ccr binary it installs is what the
   `com.turntrout.ccr` LaunchAgent starts; without this script, that
@@ -68,11 +76,20 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
 - `launchagents/`, `etc/sudoers.d/` — `__USERNAME__` templates rendered
   during install.
 - `.github/workflows/lint.yml` — shellcheck + shfmt + stylua + yamllint
-  + ruff + gitleaks. Auto-fixes and pushes a `style:` commit.
+  + actionlint + ruff + gitleaks. Auto-fixes and pushes a `style:` commit.
+  (`actionlint` is GitHub-Actions-aware where yamllint is generic YAML — it
+  catches `if:` expression-type bugs, unknown action inputs, and shell
+  issues in `run:` blocks; built from a pinned rev via `language: golang`.)
 - `.github/workflows/idempotency.yml` — runs `setup.bash --link-only` twice
   on both `ubuntu-latest` and `macos-latest`, asserts identical symlink
   set + clean doctor output. The macOS leg covers the `if [ "$(uname)"
   = "Darwin" ]` branches that Ubuntu can't.
+- `.github/workflows/uninstall.yml` — runs `tests/test_uninstall_roundtrip.py`
+  on push/PR; enforces the "Uninstall upkeep" contract below.
+- `.github/workflows/security-vulnerability-scan.yaml` — weekly; collects
+  open Dependabot/code-scanning/secret-scanning/pnpm-audit/Socket.dev
+  alerts and hands them to Claude to fix or roll up into one PR. Pairs
+  with `dependabot-auto-merge.yaml`.
 
 ## Maintenance invariants
 
@@ -245,20 +262,33 @@ Code's permission prompts (no `--dangerously-skip-permissions`).
 
 ### AI provider routing
 
-- Inference flows through Venice only for new tooling — Venice
-  provides end-to-end encryption between client and inference, so
-  prompts/outputs are not visible to the provider. Redpill's TEE is a
-  weaker guarantee and is not used for new wrappers.
-- `apps/mods/mods.yml` lists Venice models only (qwen-2.5-coder,
-  llama-3.3, mistral, etc.). The `mods` fish function wraps invocations
-  in `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the
-  Keychain.
+- Inference flows through Venice only — Venice provides end-to-end
+  encryption between client and inference, so prompts/outputs are not
+  visible to the provider. Redpill (a weaker TEE guarantee) was fully
+  removed; do not add new providers.
+- OpenAI-compatible CLIs (aider, llm) don't read `VENICE_INFERENCE_KEY`
+  directly, so the `aider_venice` and `llm` fish functions remap it onto
+  `OPENAI_API_KEY`/`OPENAI_API_BASE` inline via `envchain ai bash -c
+  '...'` — no separate shim script for a three-var remap; the
+  assignment happens inside the `bash -c` string so the key is read at
+  runtime from envchain's environment, never expanded by fish or placed
+  on argv. `bin/setup_llm.bash` writes llm's `extra-openai-models.yaml`
+  (default `venice-sonnet`).
+- `apps/mods/mods.yml` routes through Venice only (default
+  `qwen3-coder-480b-a35b-instruct-turbo`, plus `claude-sonnet-4-6`,
+  `claude-opus-4-7`, `deepseek-v4-pro`, `mistral-small-2603` — model ids
+  match Venice's `/v1/models` and rotate, so treat these as examples, not
+  a frozen list). The `mods` fish function wraps invocations in
+  `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the Keychain.
 
 ### Cross-platform
 
-- `IS_MAC=$([[ "$(uname)" == "Darwin" ]] && echo true || echo false)` is
-  the canonical detector. Linux is everything else; we don't separately
-  branch for distros, and we don't support WSL.
+- `IS_MAC=false; [[ "$(uname)" == "Darwin" ]] && IS_MAC=true` is the
+  canonical detector (see `bin/doctor.bash`, `bin/uninstall.bash`,
+  `bin/setup_llm.bash`). `setup.bash` is the exception — it never defines
+  `IS_MAC` and inlines `[ "$(uname)" = "Darwin" ]` checks directly. Linux
+  is everything else; we don't separately branch for distros, and we
+  don't support WSL.
 - Cask entries belong inside the `if OS.mac?` block in `Brewfile`. Brews
   that exist on both platforms go above it.
 - macOS-only paths in `setup.bash` (launchd agents, defaults writes,
@@ -327,14 +357,18 @@ CLI is installed, so it can never drive an actual VPN).
   `#!/usr/bin/env bash` shebang (the macOS `/bin/sh` is bash 3.2 in
   POSIX mode, so a bash-shebang script under a `.sh` name silently lies
   about what it needs). `.sh` is reserved for `#!/bin/sh` POSIX scripts
-  (e.g. `bin/aider-redpill-shim.sh`) and for sourced libraries under
-  `bin/lib/` that declare `# shellcheck shell=bash` instead of carrying
-  a shebang. The `sh-extension` pre-commit hook
+  and for sourced libraries under `bin/lib/` that declare
+  `# shellcheck shell=bash` instead of carrying a shebang. The
+  `sh-extension` pre-commit hook
   (`.pre-commit-config.yaml` → `bin/check-sh-extension.bash`) enforces
   this in CI — adding a new `.sh` file with a bash shebang fails the
   lint job.
 - Prefer fish abbreviations (`abbr -a`) over functions when the only
   job is text expansion — abbrs preserve history readability.
+- Network operations in setup scripts (clones, installers, package
+  managers) go through `retry` from `bin/lib/retry.sh` — 3 attempts
+  with linear backoff, then `|| status_msg "WARN: ..."` so setup still
+  reaches its closing doctor summary instead of dying on a blip.
 - Use `command <name>` to bypass fish/bash function shadowing
   (e.g. `command rm`, `command npm`) rather than removing the wrapper.
 - Recording a "lesson learned" **always** means landing a change via
@@ -372,19 +406,54 @@ Reference: `bin/check-idempotency.bash` is invoked from
 via `env:`. The script defaults both to `mktemp` so it's runnable
 locally too.
 
-**Don't extract from template-synced workflows.** `template-sync.yaml`
-copies these files verbatim from the upstream template on every daily
-run, so any local edits get clobbered:
+**Be careful editing template-synced workflows.** `template-sync.yaml`
+3-way-merges each synced file against the last-synced template
+version, so local edits persist across syncs — but if upstream later
+touches the same lines, the sync opens a conflict PR with merge
+markers for manual resolution. PR #112 deliberately removed
+`.github/workflows/claude.yaml` (the `@claude` auto-resolve responder)
+and `security-vulnerability-scan.yaml`; only the latter was added to
+`template-sync.yaml`'s `EXCLUDE_PATHS`, so a later sync
+(`bef5bfd`) silently resynced `claude.yaml` back in. It is live again
+today — if that's unwanted, add it to `EXCLUDE_PATHS` too; if it's
+wanted, this note can just be deleted. Synced files include:
 
 - `.github/workflows/template-sync.yaml`
 - `.github/workflows/dependabot-auto-merge.yaml`
-- `.github/workflows/claude.yaml`
 - `.github/workflows/phone-home.yaml`
-- `.github/workflows/security-vulnerability-scan.yaml`
+- `.github/workflows/claude.yaml`
 
-The full list is in `template-sync.yaml`'s `SYNC_PATHS` env. Any
-refactor for shellcheck coverage of those scripts has to land upstream
-in `alexander-turner/claude-automation-template`.
+The full list is in `template-sync.yaml`'s `SYNC_PATHS` env.
+Substantive refactors of those scripts (e.g. for shellcheck coverage)
+should still land upstream in
+`alexander-turner/claude-automation-template` rather than accumulating
+local drift that invites conflict PRs.
+
+This repo symlinks `.claude/{README.md,settings.json,hooks}` into the
+gitignored `claude-guard/` — never cloned in CI, so the links dangle —
+and `.hooks/{pre-push,prepare-commit-msg}` into `bin/`, where a naive
+sync `cp` would write *through* the live link and corrupt the target.
+`template-sync.sh`'s `process_file()` now skips any synced path that
+is, or sits under, a symlink generically (folded upstream into
+`alexander-turner/claude-automation-template`), so this is handled by
+the shared script, not a local patch.
+
+Local customizations that still diverge from the template (fold
+upstream when resolving the next sync conflict PR, then drop the
+bullet):
+
+- The dry-run input fix: `inputs.dry-run` is a boolean, so step
+  conditions must compare `== true` / `!= true` — comparing to the
+  string `'true'` never matches, which made "dry run" dispatches open
+  real PRs. (The `actionlint` pre-commit hook now flags this class of
+  expression-type mismatch.)
+- The `sh-extension` pre-commit hook's `exclude` pattern additionally
+  skips `.github/scripts/` and `.hooks/lint-skills.sh`: both are
+  populated verbatim by `template-sync` from files the template itself
+  names `*.sh` with a bash shebang, which this repo's own convention
+  would otherwise flag. Renaming them locally would just have the next
+  sync recreate the `.sh` originals alongside the renamed `.bash`
+  copies — this is a permanent local exemption, not a to-fold bug.
 
 ## When fixing CI failures
 

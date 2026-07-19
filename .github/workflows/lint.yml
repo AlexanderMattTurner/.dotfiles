@@ -6,27 +6,44 @@ on:
   pull_request:
     branches: [main, master]
 
+# The org default GITHUB_TOKEN is read-only; the auto-fix step pushes a
+# style: commit back to the branch, so contents needs an explicit write.
+permissions:
+  contents: write
+
+# The job pushes auto-fix commits back to the branch; overlapping runs on
+# the same ref would race that push (and push+pull_request double-triggers
+# make overlap routine). Newest run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Flips bin/run-gitleaks.bash (the pre-commit gitleaks hook) from
+      # skip-on-missing to fail-on-missing for both pre-commit passes below.
+      GITLEAKS_REQUIRED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.head_ref || github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Clone claude-guard
-        run: git clone https://github.com/alexander-turner/claude-guard.git claude-guard
+      - name: Clone claude-guard (pinned)
+        # Checks out the commit in claude-guard.ref so CI validates hooks
+        # against the same claude-guard that setup.bash installs.
+        run: bash bin/clone-claude-guard.bash
 
-      - name: Scan for committed secrets (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
-          GITLEAKS_ENABLE_SUMMARY: true
+      - name: Install pinned gitleaks (checksum-verified)
+        # Version + SHA-256 are pinned inside the script. The full-history
+        # secret scan itself runs via the pre-commit gitleaks hook below
+        # (GITLEAKS_REQUIRED is set job-wide), so no standalone scan step.
+        run: bash bin/install-gitleaks.bash
 
       - name: Install fish
         # No pre-commit hook ships a fish syntax checker; install for the local
@@ -36,7 +53,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fish
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
           # Pin uv's default Python to 3.13 (matches the
@@ -56,7 +73,7 @@ jobs:
           uv tool install pytest
           uv tool install pre-commit --with pre-commit-uv
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -75,8 +92,8 @@ jobs:
         run: bash claude-guard/tests/test-claude-hooks.bash
 
       - name: Run repo unit tests
-        # pytest is installed above but was never invoked here, so the
-        # safe_link / stale-symlink / security-argv guards ran nowhere in CI.
+        # Runs the safe_link / stale-symlink / security-argv guards, among
+        # others in tests/test_*.py.
         run: pytest tests/
 
       - name: Commit fixes if any

@@ -29,11 +29,10 @@ end
 # (continuum-restore fires here). Subsequent windows: server is up, so spawn a
 # fresh independent session per window for parallel layouts.
 #
-# Deliberately NOT `exec`: replacing fish with tmux means detaching (or the
-# session exiting) tears down the only process in the window, so iTerm closes
-# it. Running tmux as a child instead drops you back to a fish prompt on
-# detach and keeps the window open.
-if status is-interactive; and not set -q TMUX; and command -q tmux
+# Escape hatch: set NO_AUTO_TMUX (any value) to skip the exec — editor-embedded
+# terminals, one-off interactive shells, and remote sessions don't want it.
+# One shell:  NO_AUTO_TMUX=1 fish     Permanently:  set -Ux NO_AUTO_TMUX 1
+if status is-interactive; and not set -q TMUX; and not set -q NO_AUTO_TMUX; and command -q tmux
     if tmux has-session 2>/dev/null
         tmux new-session
     else
@@ -141,7 +140,7 @@ if $IS_MAC
 end
 
 function flash
-    sh "$DOTFILES_DIR/bin/keyboard_flash.bash"
+    bash "$DOTFILES_DIR/bin/keyboard_flash.bash"
 end
 
 function pytest
@@ -339,10 +338,20 @@ function twine
     envchain pypi command twine $argv
 end
 
-# Aider via Redpill: envchain populates REDPILL_API_KEY into the child
-# process; the shim script remaps it onto OPENAI_API_KEY and execs aider.
-function aider_redpill
-    envchain ai "$DOTFILES_DIR/bin/aider-redpill-shim.sh" (type -p aider) --edit-format editor-diff $argv
+# Aider via Venice (E2EE — the only permitted provider; see CLAUDE.md
+# "AI provider routing"). envchain populates VENICE_INFERENCE_KEY into the
+# bash -c's environment; the inline remap onto OPENAI_API_KEY (what
+# aider's litellm backend reads for openai-compatible providers) happens
+# there, at runtime, so the key never touches fish variable expansion or
+# argv — no separate shim script needed for a three-var remap.
+function aider_venice
+    envchain ai bash -c 'OPENAI_API_KEY=$VENICE_INFERENCE_KEY OPENAI_API_BASE=https://api.venice.ai/api/v1 AIDER_MODEL=openai/claude-sonnet-4-6 exec "$0" --edit-format editor-diff "$@"' (type -p aider) $argv
+end
+
+# llm via Venice — same inline remap. Default model (venice-sonnet) is
+# written by bin/setup_llm.bash into llm's extra-openai-models.yaml.
+function llm
+    envchain ai bash -c 'OPENAI_API_KEY=$VENICE_INFERENCE_KEY OPENAI_API_BASE=https://api.venice.ai/api/v1 exec "$0" "$@"' (command -s llm) $argv
 end
 
 # ── Bitwarden sync helpers ────────────────────────────────────────────────
@@ -379,27 +388,23 @@ if status is-interactive; and type -q bw
 end
 
 # Tailscale's Mullvad exit node — choice persists in daemon prefs across reboots.
+# Routes set/clear through tailscale-set-exit-node.bash so the exit-node list
+# and daemon health checks live in one place (bin/lib/tailscale-resolve.sh).
 function mullvad --description 'Switch Tailscale Mullvad exit node'
-    switch "$argv[1]"
-        case ca
-            tailscale set --exit-node=ca-mtr-wg-001.mullvad.ts.net --exit-node-allow-lan-access=true
-        case jp
-            tailscale set --exit-node=jp-tyo-wg-001.mullvad.ts.net --exit-node-allow-lan-access=true
-        case us
-            tailscale set --exit-node=us-chi-wg-301.mullvad.ts.net --exit-node-allow-lan-access=true
-        case off
-            tailscale set --exit-node=
+    if test (count $argv) -eq 0
+        echo "usage: mullvad [ca|jp|us|off|ls|st]" >&2
+        return 1
+    end
+    switch $argv[1]
         case ls list
             tailscale exit-node list
-            return
         case st status
             tailscale status | head -3
-            return
         case '*'
-            echo "usage: mullvad [ca|jp|us|off|ls|st]"
-            return 1
+            if bash "$DOTFILES_DIR/bin/tailscale-set-exit-node.bash" "$argv[1]"
+                tailscale status | head -3
+            end
     end
-    tailscale status | head -3
 end
 
 abbr -a mvca 'mullvad ca'
@@ -428,4 +433,3 @@ function brew --wraps brew --description 'Guard against starting homebrew tailsc
 end
 
 fish_add_path $HOME/go/bin
-

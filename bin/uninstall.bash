@@ -103,6 +103,14 @@ while IFS='|' read -r target source _label; do
     remove_dotfile_symlink "$target" "$source"
 done < <(managed_symlinks)
 
+# Bespoke, non-managed symlink: bin/install_fish.bash's accept-presets branch
+# links ~/.config/fish/functions/fish_prompt.fish into the repo (it's kept out
+# of managed_symlinks so the decline-presets `tide configure` path can write a
+# real generated prompt there). remove_dotfile_symlink no-ops on that real
+# file — it only removes the link when it actually points into this repo.
+remove_dotfile_symlink "$HOME/.config/fish/functions/fish_prompt.fish" \
+    "$DOTFILES_DIR/apps/fish/functions/fish_prompt.fish"
+
 if $IS_MAC; then
     # Unload + remove the ccr launch agent. launchctl unload is safe on a
     # missing label; we still prompt because it touches a running service.
@@ -162,6 +170,28 @@ if $IS_MAC; then
             fi
             ;;
         *) echo "  skip tailscaled launch daemon" ;;
+        esac
+    fi
+
+    # NOPASSWD sudoers fragment installed by setup.bash for brew-autoupdate.
+    # Leaving it behind would grant passwordless brew-as-root forever, so
+    # offer to remove it on uninstall.
+    SUDOERS_FRAGMENT="/etc/sudoers.d/brew-autoupdate"
+    if [[ -f "$SUDOERS_FRAGMENT" ]]; then
+        if $ASSUME_YES; then
+            choice=y
+        else
+            read -rp "Remove brew-autoupdate sudoers fragment? (requires sudo) (y/N) " choice
+        fi
+        case "$choice" in
+        y | Y)
+            if sudo rm -f "$SUDOERS_FRAGMENT"; then
+                echo "  removed $SUDOERS_FRAGMENT"
+            else
+                echo "  FAILED to remove $SUDOERS_FRAGMENT"
+            fi
+            ;;
+        *) echo "  skip brew-autoupdate sudoers fragment" ;;
         esac
     fi
 fi

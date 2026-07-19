@@ -1,10 +1,35 @@
 #!/bin/bash
 set -euo pipefail
 
+usage() {
+    cat <<'EOF'
+usage: bash setup.bash [--link-only]
+
+  --link-only   refresh symlinks + run doctor; skip package installation
+  -h, --help    show this message
+
+With no flags, runs the full installer (Homebrew, Brewfile, launchd
+agents, AI tooling) and finishes with a doctor.bash health summary.
+EOF
+}
+
+# Validate args strictly — an unrecognized flag must not fall through to a
+# full install (brew, sudo, chsh, launchd) the caller didn't ask for.
 LINK_ONLY=false
-if [[ "${1:-}" == "--link-only" ]]; then
-    LINK_ONLY=true
-fi
+for arg in "$@"; do
+    case "$arg" in
+    --link-only) LINK_ONLY=true ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        printf 'setup.bash: unknown argument %q\n\n' "$arg" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+done
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -21,15 +46,19 @@ DOTFILES_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DOTFILES_DIR/bin/lib/safe_link.sh"
 # shellcheck source=bin/lib/symlinks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/symlinks.sh"
+# shellcheck source=bin/lib/retry.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/retry.sh"
 
 # ── claude-guard (always run) ────────────────────────────────
-CLAUDE_GUARD_DIR="$DOTFILES_DIR/claude-guard"
-CLAUDE_GUARD_URL="https://github.com/alexander-turner/claude-guard.git"
-if [[ -d "$CLAUDE_GUARD_DIR/.git" ]]; then
-    git -C "$CLAUDE_GUARD_DIR" pull --ff-only origin main 2>/dev/null || true
-else
-    git clone "$CLAUDE_GUARD_URL" "$CLAUDE_GUARD_DIR"
-fi
+# Clones/updates at the commit pinned in claude-guard.ref — the subrepo
+# carries the AI-safety monitor, so it doesn't float at origin/main.
+# Bump with: bash bin/clone-claude-guard.bash --bump
+# Non-fatal: a fresh machine with a flaky network shouldn't be unable to
+# reach the closing doctor.bash summary. doctor.bash's claude-guard check
+# reports the state below (skips if never cloned, fails if drifted from the
+# pin) with the exact remediation command.
+bash "$DOTFILES_DIR/bin/clone-claude-guard.bash" ||
+    status_msg "WARN: claude-guard clone/update failed; rerun 'bash bin/clone-claude-guard.bash' — doctor.bash reports its state below."
 
 # ── Symlinks (always run) ────────────────────────────────────────────────────
 status_msg "Linking dotfiles..."
@@ -69,9 +98,13 @@ fi
 # ── Package installation (skipped with --link-only) ──────────────────────────
 
 # Install Homebrew first -- many subsequent steps depend on it
+install_homebrew() {
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
+}
 if ! command_exists brew; then
     status_msg "Installing Homebrew..."
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
+    retry 3 10 install_homebrew ||
+        status_msg "WARN: Homebrew install failed after 3 attempts — rerun setup.bash."
 fi
 
 # Always (re)load brew shellenv into this script's environment — handles
@@ -103,15 +136,8 @@ brew_quiet_install() {
 # second attempt almost always succeeds. doctor.bash at the end of setup
 # catches anything that's still missing after 3 tries.
 status_msg "Installing from Brewfile..."
-for attempt in 1 2 3; do
-    if brew bundle --quiet --file="$DOTFILES_DIR/Brewfile"; then
-        break
-    fi
-    if [ "$attempt" -lt 3 ]; then
-        status_msg "brew bundle failed (attempt $attempt/3); retrying in $((attempt * 10))s..."
-        sleep $((attempt * 10))
-    fi
-done
+retry 3 10 brew bundle --quiet --file="$DOTFILES_DIR/Brewfile" ||
+    status_msg "WARN: brew bundle failed after 3 attempts — doctor.bash will report missing packages."
 
 # Bitwarden CLI bootstrap. Bitwarden is the cross-machine source of truth
 # for secrets; envchain is the local runtime cache. We use the personal
@@ -138,7 +164,8 @@ fi
 
 # GitHub CLI — install and authenticate on first login
 if ! command_exists gh; then
-    brew_quiet_install gh
+    retry 3 5 brew_quiet_install gh ||
+        status_msg "WARN: 'brew install gh' failed after 3 attempts — doctor.bash will report it missing."
 fi
 if ! gh auth status &>/dev/null; then
     if bash "$DOTFILES_DIR/bin/gh-auth-from-bw.bash" 2>/dev/null; then
@@ -162,7 +189,8 @@ if [ "$(uname)" = "Darwin" ]; then
     ESCAPED_USER="$(printf '%s' "$USER" | sed 's/[\/&]/\\&/g')"
 
     # Aerospace window manager setup (requires custom tap)
-    brew_quiet_install --cask nikitabobko/tap/aerospace
+    retry 3 5 brew_quiet_install --cask nikitabobko/tap/aerospace ||
+        status_msg "WARN: aerospace cask install failed after 3 attempts — rerun setup.bash to retry."
 
     # Brew autoupdate: update once a week (604800 seconds) with --sudo.
     # Uses a NOPASSWD sudoers fragment scoped to /opt/homebrew/bin/brew
@@ -171,6 +199,7 @@ if [ "$(uname)" = "Darwin" ]; then
     SUDOERS_DEST="/etc/sudoers.d/brew-autoupdate"
     if [ -f "$SUDOERS_TEMPLATE" ] && [ ! -f "$SUDOERS_DEST" ]; then
         SUDOERS_RENDERED="$(mktemp)"
+        trap 'rm -f "$SUDOERS_RENDERED"' EXIT
         sed "s/__USERNAME__/$ESCAPED_USER/g" "$SUDOERS_TEMPLATE" >"$SUDOERS_RENDERED"
         if sudo visudo -cf "$SUDOERS_RENDERED" >/dev/null; then
             sudo install -o root -g wheel -m 0440 "$SUDOERS_RENDERED" "$SUDOERS_DEST"
@@ -178,18 +207,21 @@ if [ "$(uname)" = "Darwin" ]; then
             status_msg "WARN: rendered sudoers fragment failed validation; skipping install."
         fi
         rm -f "$SUDOERS_RENDERED"
+        trap - EXIT
     fi
     brew tap homebrew/autoupdate 2>/dev/null || true
     brew autoupdate start 604800 --upgrade --cleanup --sudo >/dev/null 2>&1 || true
 
     # OrbStack: lightweight Docker alternative for macOS
-    brew_quiet_install --cask orbstack
+    retry 3 5 brew_quiet_install --cask orbstack ||
+        status_msg "WARN: orbstack cask install failed after 3 attempts — rerun setup.bash to retry."
 
     # Tailscale VPN daemon — `com.$USER.tailscaled` is the sole daemon; boot
     # out homebrew's if present. Two daemons racing on /var/run/tailscaled.socket
     # leaves stale provenance on the socket → CLI hits EPERM on connect.
     TAILSCALE_PLIST_DEST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
     TAILSCALE_PLIST_RENDERED="$(mktemp)"
+    trap 'rm -f "$TAILSCALE_PLIST_RENDERED"' EXIT
     sed "s/__USERNAME__/$ESCAPED_USER/g" "$DOTFILES_DIR/launchagents/com.tailscaled.plist.template" \
         >"$TAILSCALE_PLIST_RENDERED"
     needs_bootstrap=false
@@ -198,6 +230,7 @@ if [ "$(uname)" = "Darwin" ]; then
         needs_bootstrap=true
     fi
     rm -f "$TAILSCALE_PLIST_RENDERED"
+    trap - EXIT
 
     HOMEBREW_TAILSCALED_PLIST="/Library/LaunchDaemons/homebrew.mxcl.tailscale.plist"
     if [ -f "$HOMEBREW_TAILSCALED_PLIST" ]; then
@@ -243,6 +276,7 @@ if [ "$(uname)" = "Darwin" ]; then
     TS_EXIT_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
     mkdir -p "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
     TS_EXIT_PLIST_RENDERED="$(mktemp)"
+    trap 'rm -f "$TS_EXIT_PLIST_RENDERED"' EXIT
     sed "s/__USERNAME__/$ESCAPED_USER/g" \
         "$DOTFILES_DIR/launchagents/com.turntrout.tailscale-exit-node.plist.template" \
         >"$TS_EXIT_PLIST_RENDERED"
@@ -250,35 +284,57 @@ if [ "$(uname)" = "Darwin" ]; then
         install -m 0644 "$TS_EXIT_PLIST_RENDERED" "$TS_EXIT_PLIST_DEST"
     fi
     rm -f "$TS_EXIT_PLIST_RENDERED"
+    trap - EXIT
     launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
 
-    # Install wally-cli for keyboard flashing
+    # Install wally-cli for keyboard flashing. Non-fatal: doctor reports it
+    # as an optional skip, so a flaky download must not abort setup here.
     if ! command_exists wally-cli && command_exists go; then
-        go install github.com/zsa/wally-cli@latest >/dev/null
+        go install github.com/zsa/wally-cli@latest >/dev/null ||
+            status_msg "WARN: 'go install wally-cli' failed; rerun setup.bash to retry."
     fi
 
-    # iTerm2 shell integration
+    # iTerm2 shell integration. Non-fatal for the same reason.
     if [ ! -f "$HOME/.iterm2_shell_integration.bash" ]; then
-        curl -fsSL https://iterm2.com/shell_integration/install_shell_integration_and_utilities.sh | bash >/dev/null
+        curl -fsSL https://iterm2.com/shell_integration/install_shell_integration_and_utilities.sh | bash >/dev/null ||
+            status_msg "WARN: iTerm2 shell integration install failed; rerun setup.bash to retry."
+    fi
+
+    # iTerm2 reads/writes preferences from the tracked repo copy via "Load
+    # preferences from a custom folder" (takes effect on next iTerm2 launch).
+    # No symlink here: iTerm2 saves prefs atomically (write temp + rename),
+    # which would replace a symlink with a real file and silently de-track it —
+    # hence pointing PrefsCustomFolder at the repo directory itself. The old
+    # ~/Library symlink from that scheme is retired below.
+    defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$DOTFILES_DIR/apps"
+    defaults write com.googlecode.iterm2 LoadPrefsFromCustomFolder -bool true
+    if [ -L "$HOME/Library/com.googlecode.iterm2.plist" ]; then
+        rm -f "$HOME/Library/com.googlecode.iterm2.plist"
     fi
 
 else # Assume linux
     status_msg "Installing Linux packages..."
 
-    sudo apt-get update -qq
+    retry 3 10 sudo apt-get update -qq ||
+        status_msg "WARN: apt-get update failed after 3 attempts; package installs below may fail."
     # libsecret-tools provides `secret-tool`, the Linux equivalent of macOS
     # `security` used by bin/lib/secret-store.sh for caching bw credentials.
-    sudo apt-get install -y -qq python3-pynvim pipx cron libsecret-tools
+    retry 3 10 sudo apt-get install -y -qq python3-pynvim pipx cron libsecret-tools ||
+        status_msg "WARN: apt-get install failed after 3 attempts; rerun setup.bash to retry."
 fi
 
-# Install CLI tools via uv (not in Brewfile -- they're Python packages)
+# Install CLI tools via uv (not in Brewfile -- they're Python packages).
+# retry+WARN like the other installers so a transient PyPI blip doesn't abort
+# setup before doctor.bash runs — doctor reports either tool if still missing.
 if ! command_exists trash-put; then
-    uv tool install --quiet trash-cli
+    retry 3 5 uv tool install --quiet trash-cli ||
+        status_msg "WARN: 'uv tool install trash-cli' failed after 3 attempts — doctor.bash will report trash-put missing."
 fi
 
 if command_exists uv; then
-    uv tool install --quiet pre-commit --with pre-commit-uv
+    retry 3 5 uv tool install --quiet pre-commit --with pre-commit-uv ||
+        status_msg "WARN: 'uv tool install pre-commit' failed after 3 attempts — doctor.bash will report pre-commit missing."
 fi
 
 # Clear trash which is over 30 days old, monthly
@@ -300,7 +356,8 @@ status_msg "Setting up tmux..."
 TPM_DIR="$HOME/.tmux/plugins/tpm"
 if [ ! -d "$TPM_DIR/.git" ]; then
     rm -rf "$TPM_DIR"
-    git clone --quiet https://github.com/tmux-plugins/tpm "$TPM_DIR" >/dev/null
+    retry 3 5 git clone --quiet https://github.com/tmux-plugins/tpm "$TPM_DIR" >/dev/null ||
+        status_msg "WARN: tpm clone failed after 3 attempts — rerun setup.bash."
 fi
 tmux source ~/.tmux.conf >/dev/null 2>&1 || true
 ~/.tmux/plugins/tpm/bin/install_plugins >/dev/null ||
@@ -384,9 +441,9 @@ if command_exists pnpm; then
     *":$PNPM_HOME:"*) ;;
     *) export PATH="$PNPM_HOME:$PATH" ;;
     esac
-    pnpm install -g prettier ||
+    retry 3 5 pnpm install -g prettier ||
         status_msg "WARN: 'pnpm install -g prettier' failed; formatting may be unavailable"
-    pnpm install -g @bitwarden/cli ||
+    retry 3 5 pnpm install -g @bitwarden/cli ||
         status_msg "WARN: 'pnpm install -g @bitwarden/cli' failed; rerun to get bw CLI"
 fi
 
@@ -407,7 +464,7 @@ fi
 # pnpm is configured above (PNPM_HOME + PATH), so this lands alongside the
 # other globals (claude-code, ccr, prettier, @bitwarden/cli).
 if command_exists pnpm; then
-    pnpm add --global @devcontainers/cli >/dev/null 2>&1 ||
+    retry 3 5 pnpm add --global @devcontainers/cli >/dev/null 2>&1 ||
         status_msg "WARN: 'pnpm add -g @devcontainers/cli' failed. The claude wrapper will fall back to running on the host."
 fi
 
@@ -416,7 +473,8 @@ fi
 bash "$DOTFILES_DIR/bin/setup_llm.bash"
 
 if [ "$(uname)" != "Darwin" ] && ! command_exists xmllint; then
-    sudo apt-get install -y libxml2-utils
+    retry 3 10 sudo apt-get install -y libxml2-utils ||
+        status_msg "WARN: 'apt-get install libxml2-utils' failed after 3 attempts — doctor.bash will report xmllint missing."
 fi
 
 # Backup existing neovim data (only on first run — skip if .bak already exists to

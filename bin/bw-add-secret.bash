@@ -47,7 +47,7 @@ bw_require_logged_in || exit 1
 bw_ensure_session || exit 1
 keychain_ensure_unlocked || exit 1
 
-"$BW_CMD" sync --session "$BW_SESSION" >/dev/null 2>&1 || true
+"$BW_CMD" sync >/dev/null 2>&1 || true
 
 # Read value into the SECRET env var. Hidden prompt on TTY, plain stdin
 # read otherwise (for piping). Exported because jq references env.SECRET.
@@ -85,7 +85,7 @@ create_vault_item() {
         jq --arg n "$item_name" --arg fid "$folder_id" \
             '.name=$n | .folderId=$fid | .login={"username":null,"password":env.SECRET,"totp":null,"uris":[]} | .notes=null' |
         "$BW_CMD" encode |
-        "$BW_CMD" create item --session "$BW_SESSION" >/dev/null
+        "$BW_CMD" create item >/dev/null
 }
 
 # Overwrite the password on an existing vault item. The full item JSON is
@@ -93,7 +93,7 @@ create_vault_item() {
 # piped back through `bw edit item`.
 update_vault_item() {
     local item_json id
-    item_json=$("$BW_CMD" get item --session "$BW_SESSION" "$item_name")
+    item_json=$("$BW_CMD" get item "$item_name")
     id=$(printf '%s' "$item_json" | jq -r '.id')
     [ -n "$id" ] || {
         echo "bw: couldn't resolve id for '$item_name'." >&2
@@ -102,7 +102,7 @@ update_vault_item() {
     printf '%s' "$item_json" |
         jq '.login.password=env.SECRET' |
         "$BW_CMD" encode |
-        "$BW_CMD" edit item --session "$BW_SESSION" "$id" >/dev/null
+        "$BW_CMD" edit item "$id" >/dev/null
 }
 
 read_secret_into_SECRET

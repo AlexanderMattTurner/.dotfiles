@@ -5,6 +5,11 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Resolve DOTFILES_DIR from this script's location (bin/ is one level down)
+DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/safe_link.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/safe_link.sh"
+
 if ! command_exists fish; then
     echo ":: Installing fish shell..."
     brew install --quiet fish
@@ -66,16 +71,29 @@ if fish -c 'functions -q tide' 2>/dev/null; then
     tide_already_configured=1
 else
     tide_already_configured=0
-    # Remove conflicting fish_prompt.fish before tide install (tide provides its own)
-    rm -f "$HOME/.config/fish/functions/fish_prompt.fish"
+    # Remove conflicting fish_prompt.fish before tide install (tide provides its
+    # own). Back up a real (non-symlink) file first — mirrors safe_link's
+    # clobber-with-backup semantics instead of silently discarding it.
+    fish_prompt_target="$HOME/.config/fish/functions/fish_prompt.fish"
+    if [ -e "$fish_prompt_target" ] && [ ! -L "$fish_prompt_target" ]; then
+        _safe_link_backup "$fish_prompt_target"
+    else
+        rm -f "$fish_prompt_target"
+    fi
 
     echo ":: Installing fish plugins..."
-    fish <<FISH_SCRIPT
+    # Non-fatal: a network blip here must not abort the whole setup run.
+    # Everything downstream tolerates a missing tide (the tide tweaks below
+    # are already || true, and the preset prompt questions gate on
+    # tide_already_configured).
+    if ! fish <<FISH_SCRIPT; then
       curl -fsSL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
       fisher install jorgebucaran/fisher >/dev/null
 
       fisher install IlanCosman/tide@v6 >/dev/null
 FISH_SCRIPT
+        echo ":: WARN: fisher/tide install failed (network?); rerun bin/install_fish.bash to retry." >&2
+    fi
 fi
 
 # Drop `jobs` from tide's right prompt: the bundled _tide_item_jobs trips on
@@ -85,8 +103,6 @@ fi
 # runtime list from the canonical one on the next prompt and reintroduces it.
 fish -c '_tide_find_and_remove jobs tide_right_prompt_items; _tide_find_and_remove jobs _tide_right_items' 2>/dev/null || true
 
-# Resolve DOTFILES_DIR from this script's location (bin/ is one level down)
-DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 bash "$DOTFILES_DIR"/bin/font_install.bash
 
 # Create Fish configuration directory if it doesn't exist
@@ -116,6 +132,11 @@ else
         # `--update=none` is GNU-only. find + per-file cp is portable.
         while IFS= read -r -d '' src; do
             rel=${src#"$DOTFILES_DIR/apps/fish/"}
+            # fish_prompt.fish is handled explicitly below via safe_link, not
+            # copied here — copying it first would leave a real file in place
+            # that safe_link would then (correctly) refuse to clobber without
+            # a backup-and-prompt, defeating the "always symlink" intent.
+            [ "$rel" = "functions/fish_prompt.fish" ] && continue
             dst="$FISH_CONFIG_DIR/$rel"
             [ -e "$dst" ] || { mkdir -p "$(dirname "$dst")" && cp -P "$src" "$dst"; }
         done < <(find "$DOTFILES_DIR/apps/fish" \( -type f -o -type l \) -print0 2>/dev/null)
@@ -123,8 +144,10 @@ else
         # branch below runs `tide configure`, which writes the user's
         # generated prompt here — we don't want to symlink-trap that).
         # In the accept-presets branch we DO want the symlink so repo
-        # updates propagate, so place it explicitly here.
-        ln -sf "$DOTFILES_DIR"/apps/fish/functions/fish_prompt.fish "$FISH_CONFIG_DIR/functions/fish_prompt.fish"
+        # updates propagate, so place it explicitly here via safe_link (not
+        # a bare ln -sf) so a real pre-existing file gets backed up, not
+        # silently clobbered.
+        safe_link "$DOTFILES_DIR/apps/fish/functions/fish_prompt.fish" "$FISH_CONFIG_DIR/functions/fish_prompt.fish"
     else
         fish -c "tide configure"
     fi
