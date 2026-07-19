@@ -18,14 +18,16 @@ _security_quote() {
 
 _keychain_unlock() {
     local pw="$1" kc="$2"
-    # `security -i` reads commands one line at a time; a raw newline in $pw
-    # would truncate it mid-command and feed the remainder back in as an
-    # injected security command. _security_quote only escapes " and \, not
-    # newlines — refuse rather than risk silent truncation/injection. (No
-    # known path into this function can currently carry a newline — $pw
-    # comes from a single-line `read -rs` or a cache file written without
-    # one — but this mirrors the same guard added to secret-store.sh's
-    # secret_set() for defense in depth.)
+    # `security -i` is line-oriented — a raw newline in $pw can't be embedded
+    # safely: at best it truncates the password mid-command; at worst, if
+    # SecurityTool's line parser doesn't treat a newline inside "..." as a
+    # quoted continuation, the remainder is read back as a separate security
+    # command. _security_quote escapes only " and \, not newlines, so refuse
+    # rather than find out (security is macOS-only, untestable in CI here);
+    # rejecting is safe regardless of the parser's actual behavior. No known
+    # path into this function can currently carry a newline — $pw comes from a
+    # single-line `read -rs` or a cache file written without one — so this
+    # mirrors the guard in secret-store.sh's secret_set() for defense in depth.
     case "$pw" in
     *$'\n'*)
         echo "_keychain_unlock: password contains a newline; the \`security -i\` protocol is line-oriented and can't embed one safely. Refusing to attempt unlock." >&2

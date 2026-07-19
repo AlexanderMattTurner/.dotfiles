@@ -119,8 +119,9 @@ def test_keychain_unlock_propagates_failure_exit_code(tmp_path: Path) -> None:
 
 def test_keychain_unlock_rejects_newline_password(tmp_path: Path) -> None:
     """Same line-oriented-parser hazard as secret_set: a raw newline in the
-    password would truncate mid-command and feed the remainder back in as
-    an injected `security -i` command. _keychain_unlock must refuse it."""
+    password can't reach `security -i` safely (it would either truncate the
+    command or be read back as a separate one). _keychain_unlock must refuse
+    it rather than pass it through — assert security is never even invoked."""
     argv_log, stdin_log = _make_security_stub(tmp_path)
     # Passed via env var, not interpolated into the bash source string: see
     # test_secret_set_security_backend_rejects_newline_value for why.
@@ -193,9 +194,10 @@ def test_security_quote_escapes_backslash_and_double_quote(tmp_path: Path) -> No
 
 def test_secret_set_security_backend_rejects_newline_value(tmp_path: Path) -> None:
     """`security -i` parses one command per line, so a raw newline in the
-    value would truncate it mid-command and feed the remainder back in as a
-    new command. secret_set must refuse rather than silently truncate or
-    let the remainder execute as an injected `security -i` command."""
+    value can't be embedded safely — it would either truncate the command or
+    be read back as a separate one. secret_set must refuse rather than pass a
+    newline-containing value through to `security -i` — assert the value never
+    reaches security at all (neither argv nor stdin log is written)."""
     argv_log, stdin_log = _make_security_stub(tmp_path)
     # Passed via env var, not interpolated into the bash source string:
     # Python's repr() of an embedded "\n" prints the two-character escape
