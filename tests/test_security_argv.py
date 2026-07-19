@@ -222,3 +222,68 @@ def test_secret_set_security_backend_rejects_newline_value(tmp_path: Path) -> No
     assert result.returncode != 0, "secret_set must fail on a newline-containing value"
     assert not argv_log.exists(), "security must never be invoked with a truncated/injected value"
     assert not stdin_log.exists(), "security must never be invoked with a truncated/injected value"
+
+
+# ── Shared `security -i` line-builder (bin/lib/security-cmd.sh, issue #126) ──
+#
+# The quoting + newline-rejection logic used to be copy-pasted into
+# secret-store.sh and keychain.sh (that duplication is what let the newline
+# gap re-open in #125). It now lives in one shared helper; these exercise it
+# directly and assert the duplication is gone. secret_set's own newline refusal
+# is covered by test_secret_set_security_backend_rejects_newline_value above.
+
+SECURITY_CMD_SH = REPO / "bin" / "lib" / "security-cmd.sh"
+
+
+def _capture(script: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "-c", script],
+        env={**os.environ, **(env or {})},
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+    )
+
+
+def test_security_build_line_quotes_and_escapes_every_token() -> None:
+    result = _capture(
+        f'source "{SECURITY_CMD_SH}"\n'
+        r'security_build_line add-generic-password -s "my svc" -w '
+        r'''"has \"quote\" and \\slash"'''
+        "\n"
+    )
+    assert result.returncode == 0, result.stderr
+    # Each token is double-quoted; the value's " and \ are backslash-escaped.
+    assert result.stdout == (
+        r'"add-generic-password" "-s" "my svc" "-w" '
+        r'"has \"quote\" and \\slash"'
+    ), f"unexpected line: {result.stdout!r}"
+
+
+def test_security_build_line_rejects_newline_before_emitting() -> None:
+    """The guard must run before any quoting/emission: a newline in ANY
+    argument fails the whole line with nothing on stdout, so a caller doing
+    `line=$(security_build_line ...)` can branch on the exit code."""
+    result = _capture(
+        f'source "{SECURITY_CMD_SH}"\n'
+        # A newline embedded in the value argument.
+        "security_build_line add-generic-password -w $'line1\\nline2'\n"
+    )
+    assert result.returncode != 0, "newline argument must fail the build"
+    assert result.stdout == "", f"nothing should be emitted, got: {result.stdout!r}"
+    assert "newline" in result.stderr, f"expected a diagnostic, got: {result.stderr!r}"
+
+
+def test_security_quote_is_not_duplicated_across_libs() -> None:
+    """Regression guard for the whole point of #126: `_security_quote` must be
+    defined in exactly one place. A future third `security -i` caller sourcing
+    the shared helper then can't re-open the newline gap by copying the quoter
+    without the guard."""
+    definers = [
+        p.relative_to(REPO)
+        for p in (REPO / "bin").rglob("*.sh")
+        if re.search(r"^_security_quote\(\)", p.read_text(), re.MULTILINE)
+    ]
+    assert definers == [Path("bin/lib/security-cmd.sh")], (
+        f"_security_quote should be defined only in security-cmd.sh, found: {definers}"
+    )
