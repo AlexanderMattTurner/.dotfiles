@@ -117,6 +117,32 @@ def test_keychain_unlock_propagates_failure_exit_code(tmp_path: Path) -> None:
     assert result.returncode == 42, f"expected rc=42, got rc={result.returncode}"
 
 
+def test_keychain_unlock_rejects_newline_password(tmp_path: Path) -> None:
+    """Same line-oriented-parser hazard as secret_set: a raw newline in the
+    password would truncate mid-command and feed the remainder back in as
+    an injected `security -i` command. _keychain_unlock must refuse it."""
+    argv_log, stdin_log = _make_security_stub(tmp_path)
+    # Passed via env var, not interpolated into the bash source string: see
+    # test_secret_set_security_backend_rejects_newline_value for why.
+    smuggled = "legit-part\ndelete-generic-password -s bw-master-password -a tester"
+
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        "SMUGGLED_PW": smuggled,
+    }
+    result = _bash(
+        f'source "{REPO}/bin/lib/keychain.sh"\n'
+        '_keychain_unlock "$SMUGGLED_PW" /fake/login.keychain-db\n',
+        env,
+        check=False,
+    )
+
+    assert result.returncode != 0, "_keychain_unlock must fail on a newline-containing password"
+    assert not argv_log.exists(), "security must never be invoked with a truncated/injected value"
+    assert not stdin_log.exists(), "security must never be invoked with a truncated/injected value"
+
+
 def test_bw_session_never_on_argv() -> None:
     """BW_SESSION is a live vault-decryption key; it must reach bw only via
     the exported environment variable (which the bw CLI reads natively),
