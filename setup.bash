@@ -301,6 +301,18 @@ if [ "$(uname)" = "Darwin" ]; then
             status_msg "WARN: iTerm2 shell integration install failed; rerun setup.bash to retry."
     fi
 
+    # iTerm2 reads/writes preferences from the tracked repo copy via "Load
+    # preferences from a custom folder" (takes effect on next iTerm2 launch).
+    # No symlink here: iTerm2 saves prefs atomically (write temp + rename),
+    # which would replace a symlink with a real file and silently de-track it —
+    # hence pointing PrefsCustomFolder at the repo directory itself. The old
+    # ~/Library symlink from that scheme is retired below.
+    defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$DOTFILES_DIR/apps"
+    defaults write com.googlecode.iterm2 LoadPrefsFromCustomFolder -bool true
+    if [ -L "$HOME/Library/com.googlecode.iterm2.plist" ]; then
+        rm -f "$HOME/Library/com.googlecode.iterm2.plist"
+    fi
+
 else # Assume linux
     status_msg "Installing Linux packages..."
 

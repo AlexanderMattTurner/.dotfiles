@@ -41,7 +41,6 @@ EOF
     if [[ "$(uname)" == "Darwin" ]]; then
         cat <<EOF
 $HOME/.aerospace.toml|$DOTFILES_DIR/.aerospace.toml|.aerospace.toml
-$HOME/Library/com.googlecode.iterm2.plist|$DOTFILES_DIR/apps/com.googlecode.iterm2.plist|iTerm2 plist
 $HOME/.config/swiftbar/vpn.10s.bash|$DOTFILES_DIR/apps/swiftbar/vpn.10s.bash|swiftbar vpn plugin
 $HOME/Library/Application Support/VSCodium/User/settings.json|$DOTFILES_DIR/apps/vscodium/settings.json|VSCodium settings (macOS)
 $HOME/Library/Application Support/VSCodium/User/keybindings.json|$DOTFILES_DIR/apps/vscodium/keybindings.json|VSCodium keybindings (macOS)
