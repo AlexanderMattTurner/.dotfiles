@@ -1,0 +1,3 @@
+[submodule "agent-glovebox"]
+	path = agent-glovebox
+	url = ./agent-glovebox
