@@ -42,7 +42,15 @@ jobs:
       - name: Scan lessons for leaked secrets
         if: steps.extract.outputs.has_lessons == 'true'
         run: |
+<<<<<<< local
           bash bin/install-gitleaks.bash
+=======
+          set -euo pipefail
+          curl --proto '=https' -fsSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+            -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar xz -C /usr/local/bin -f /tmp/gitleaks.tar.gz gitleaks
+>>>>>>> template
           gitleaks detect --no-git -s /tmp/phone-home -v
 
       - name: Submit to template repo
