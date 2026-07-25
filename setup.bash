@@ -295,6 +295,12 @@ if [ "$(uname)" = "Darwin" ]; then
             status_msg "WARN: 'go install wally-cli' failed; rerun setup.bash to retry."
     fi
 
+    # SlowQuit: hold-to-quit delay on Cmd-Q. Ships only as a DMG (no cask), so a
+    # dedicated pinned+checksummed installer handles the download/mount/copy.
+    # Non-fatal: doctor reports a missing /Applications/SlowQuit.app as a skip.
+    retry 3 5 bash "$DOTFILES_DIR/bin/install-slowquit.bash" ||
+        status_msg "WARN: SlowQuit install failed after 3 attempts — rerun setup.bash or bin/install-slowquit.bash to retry."
+
     # iTerm2 shell integration. Non-fatal for the same reason.
     if [ ! -f "$HOME/.iterm2_shell_integration.bash" ]; then
         curl -fsSL https://iterm2.com/shell_integration/install_shell_integration_and_utilities.sh | bash >/dev/null ||

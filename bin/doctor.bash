@@ -262,6 +262,13 @@ if $IS_MAC; then
     else
         skip "codium" "not on PATH (run setup.bash or: brew install --cask vscodium)"
     fi
+    # SlowQuit: DMG-installed by bin/install-slowquit.bash (no cask). Skip rather
+    # than fail when absent — it's a convenience app, not required plumbing.
+    if [ -d "/Applications/SlowQuit.app" ]; then
+        pass "SlowQuit.app"
+    else
+        skip "SlowQuit.app" "not installed (run setup.bash or: bash bin/install-slowquit.bash)"
+    fi
 fi
 
 # ── Login shell ─────────────────────────────────────────────────────────────
