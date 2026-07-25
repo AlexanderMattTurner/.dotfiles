@@ -8,36 +8,18 @@
 # Caches the keychain password at $HOME/.config/dotfiles/keychain-password
 # (mode 0600 in a 0700 dir) so subsequent runs unlock without prompting.
 
-# Escape a string as a double-quoted argument for `security -i`. The parser
-# (SecurityTool's split_line) handles backslash escapes for " and \ inside
-# double quotes.
-_security_quote() {
-    local s=${1//\\/\\\\}
-    printf '"%s"' "${s//\"/\\\"}"
-}
+# shellcheck source=bin/lib/security-cmd.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/security-cmd.sh"
 
 _keychain_unlock() {
-    local pw="$1" kc="$2"
-    # `security -i` is line-oriented — a raw newline in $pw can't be embedded
-    # safely: at best it truncates the password mid-command; at worst, if
-    # SecurityTool's line parser doesn't treat a newline inside "..." as a
-    # quoted continuation, the remainder is read back as a separate security
-    # command. _security_quote escapes only " and \, not newlines, so refuse
-    # rather than find out (security is macOS-only, untestable in CI here);
-    # rejecting is safe regardless of the parser's actual behavior. No known
-    # path into this function can currently carry a newline — $pw comes from a
-    # single-line `read -rs` or a cache file written without one — so this
-    # mirrors the guard in secret-store.sh's secret_set() for defense in depth.
-    case "$pw" in
-    *$'\n'*)
-        echo "_keychain_unlock: password contains a newline; the \`security -i\` protocol is line-oriented and can't embed one safely. Refusing to attempt unlock." >&2
+    local pw="$1" kc="$2" line
+    # security_build_line rejects newline-bearing arguments before emitting
+    # anything; treat that as an unlock failure (the password only ever comes
+    # from a single-line `read -rs` or cache file, so this is defense in depth).
+    if ! line=$(security_build_line unlock-keychain -p "$pw" "$kc"); then
         return 1
-        ;;
-    esac
-    printf 'unlock-keychain -p %s %s\n' \
-        "$(_security_quote "$pw")" \
-        "$(_security_quote "$kc")" |
-        security -i >/dev/null 2>&1
+    fi
+    printf '%s\n' "$line" | security -i >/dev/null 2>&1
 }
 
 keychain_ensure_unlocked() {

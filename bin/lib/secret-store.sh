@@ -19,13 +19,8 @@
 SECRET_STORE_BACKEND=""
 SECRET_STORE_FILE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/secrets"
 
-# Escape a string as a double-quoted argument for `security -i`. The parser
-# (SecurityTool's split_line) handles backslash escapes for " and \ inside
-# double quotes.
-_security_quote() {
-    local s=${1//\\/\\\\}
-    printf '"%s"' "${s//\"/\\\"}"
-}
+# shellcheck source=bin/lib/security-cmd.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/security-cmd.sh"
 
 # Pick a backend exactly once per shell. Cached in $SECRET_STORE_BACKEND.
 secret_store_init() {
@@ -101,27 +96,15 @@ secret_set() {
     local service="$1" value="$2"
     case "$SECRET_STORE_BACKEND" in
     security)
-        # `security -i` is line-oriented — it reads one command per line, like
-        # an interactive prompt. A raw newline in $value therefore can't be
-        # embedded safely: at best it splits the value across lines (silently
-        # truncating the stored secret); at worst, if SecurityTool's line
-        # parser doesn't treat a newline inside "..." as a quoted continuation,
-        # the remainder is read back as a separate security command. We don't
-        # verify which of those happens (security is macOS-only, untestable in
-        # CI here), and _security_quote escapes only " and \, not newlines — so
-        # refuse outright. Rejecting a multi-line value is the conservative,
-        # safe choice regardless of how the parser actually behaves.
-        case "$value" in
-        *$'\n'*)
-            echo "secret_set: value for '$service' contains a newline; the \`security -i\` protocol is line-oriented and can't embed one safely. Refusing to store it." >&2
+        # security_build_line refuses newline-bearing arguments (the `-i`
+        # protocol is line-oriented); surface that as a set failure rather
+        # than silently storing a truncated secret.
+        local line
+        if ! line=$(security_build_line add-generic-password \
+            -s "$service" -a "$USER" -U -w "$value"); then
             return 1
-            ;;
-        esac
-        printf 'add-generic-password -s %s -a %s -U -w %s\n' \
-            "$(_security_quote "$service")" \
-            "$(_security_quote "$USER")" \
-            "$(_security_quote "$value")" |
-            security -i >/dev/null
+        fi
+        printf '%s\n' "$line" | security -i >/dev/null
         ;;
     secret-tool)
         printf '%s' "$value" | secret-tool store \

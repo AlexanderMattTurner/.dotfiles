@@ -44,6 +44,10 @@ IS_MAC=false
 source "$DOTFILES_DIR/bin/lib/symlinks.sh"
 # shellcheck source=lib/claude-guard-pin.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/claude-guard-pin.sh"
+# check_symlink / check_command live in a lib so they can be unit-tested; they
+# call the pass/fail reporters defined below and bump MANAGED_LINK_FAIL.
+# shellcheck source=lib/doctor-checks.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/doctor-checks.sh"
 
 if [[ -t 1 ]]; then
     GREEN='\033[0;32m'
@@ -91,31 +95,6 @@ _maybe_print_section() {
 section "Symlinks"
 
 MANAGED_LINK_FAIL=0
-check_symlink() {
-    local target="$1"
-    local expected_source="$2"
-    local label="$3"
-    if [[ ! -L "$target" ]]; then
-        if [[ -e "$target" ]]; then
-            fail "$label" "$target exists but is not a symlink"
-        else
-            fail "$label" "$target missing (run setup.bash --link-only)"
-        fi
-        MANAGED_LINK_FAIL=$((MANAGED_LINK_FAIL + 1))
-        return
-    fi
-    local actual
-    actual="$(readlink "$target")"
-    if [[ "$actual" != "$expected_source" ]]; then
-        fail "$label" "$target -> $actual, expected $expected_source"
-        MANAGED_LINK_FAIL=$((MANAGED_LINK_FAIL + 1))
-    elif [[ ! -e "$target" ]]; then
-        fail "$label" "$target -> $expected_source (dangling — source does not exist)"
-        MANAGED_LINK_FAIL=$((MANAGED_LINK_FAIL + 1))
-    else
-        pass "$label"
-    fi
-}
 
 # Iterate both shared lists from bin/lib/symlinks.sh (sourced above).
 while IFS='|' read -r target source label; do
@@ -164,15 +143,6 @@ esac
 
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
-
-check_command() {
-    local cmd="$1"
-    if command -v "$cmd" >/dev/null 2>&1; then
-        pass "$cmd"
-    else
-        fail "$cmd" "not on PATH"
-    fi
-}
 
 for cmd in git fish nvim tmux brew zoxide gh fzf rg fd bat eza delta tokei dust btm mise carapace shfmt mods gitleaks pre-commit uv; do
     check_command "$cmd"
