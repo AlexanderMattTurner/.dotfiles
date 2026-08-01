@@ -290,6 +290,39 @@ else
     skip "envchain" "not installed"
 fi
 
+# Mid-session rotation is the loopback proxy (bin/claude-rotate-proxy.py) the claude
+# fish wrapper points ANTHROPIC_BASE_URL at. The old apiKeyHelper wiring is gone; a
+# settings.json that still carries it points at a --helper mode that no longer
+# exists and would break every session, so flag that drift.
+claude_settings="$HOME/.claude/settings.json"
+if ! command -v jq >/dev/null 2>&1; then
+    skip "rotation settings" "jq not installed"
+elif [[ ! -f "$claude_settings" ]]; then
+    skip "rotation settings" "\$HOME/.claude/settings.json missing (run setup.bash)"
+elif [[ -n "$(jq -re '.apiKeyHelper // ""' "$claude_settings" 2>/dev/null)" ]]; then
+    fail "rotation settings" "settings.json still sets apiKeyHelper — mid-session rotation is now the loopback proxy; re-run setup.bash to refresh the symlink"
+else
+    pass "settings.json has no stale apiKeyHelper"
+fi
+
+# The rotation proxy and the selection engine it drives. The dry run gates
+# CLAUDE_ACCOUNT_NO_CONVERGE so a health check never re-points live sandboxes; it
+# may still spend the cache-gated probe any --pick does.
+proxy="$DOTFILES_DIR/bin/claude-rotate-proxy.py"
+if ! command -v python3 >/dev/null 2>&1; then
+    skip "rotation proxy" "python3 not installed"
+elif ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$proxy" 2>/dev/null; then
+    fail "rotation proxy" "$proxy does not parse"
+elif ! command -v envchain >/dev/null 2>&1; then
+    skip "rotation proxy" "envchain not installed"
+elif [[ -z "$("$DOTFILES_DIR/bin/claude-account.bash" --namespaces 2>/dev/null)" ]]; then
+    skip "rotation proxy" "no subscription account seeded (claude setup-token; envchain --set <ns> CLAUDE_CODE_OAUTH_TOKEN)"
+elif CLAUDE_ACCOUNT_NO_CONVERGE=1 "$DOTFILES_DIR/bin/claude-account.bash" --pick >/dev/null 2>&1; then
+    pass "rotation proxy + claude-account --pick serve an account"
+else
+    skip "rotation proxy" "every seeded account is at its usage limit right now (transient)"
+fi
+
 # ── Brewfile ────────────────────────────────────────────────────────────────
 section "Brewfile"
 

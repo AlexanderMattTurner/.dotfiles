@@ -23,3 +23,7 @@ __pycache__/
 agent-glovebox/
 .pnpm-store
 .worktrees
+
+# clone-claude-guard.bash checks the subrepo out here (pinned by claude-guard.ref);
+# it is a separate git checkout, never tracked content of this repo.
+claude-guard/
