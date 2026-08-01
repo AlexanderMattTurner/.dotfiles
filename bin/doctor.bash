@@ -307,7 +307,7 @@ fi
 
 if ! command -v envchain >/dev/null 2>&1; then
     skip "claude-account helper" "envchain not installed"
-elif CLAUDE_ACCOUNT_NO_CONVERGE=1 "$DOTFILES_DIR/bin/claude-account.bash" --helper >/dev/null 2>&1; then
+elif CLAUDE_ACCOUNT_NO_CONVERGE=1 CLAUDE_ACCOUNT_NO_WATCH=1 "$DOTFILES_DIR/bin/claude-account.bash" --helper >/dev/null 2>&1; then
     pass "claude-account --helper serves a credential"
 else
     fail "claude-account helper" "no usable credential — seed a subscription namespace (claude setup-token; envchain --set <ns> CLAUDE_CODE_OAUTH_TOKEN) or envchain ai ANTHROPIC_API_KEY (bwseed)"

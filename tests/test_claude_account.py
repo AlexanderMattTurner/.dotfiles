@@ -7,6 +7,7 @@ and `curl` binaries on PATH, so the cooldown records and the exec'd environment
 are observed rather than asserted about.
 """
 
+import contextlib
 import json
 import os
 import subprocess
@@ -96,6 +97,10 @@ def _run(
         "XDG_STATE_HOME": str(tmp_path / "state"),
         "CURL_LOG": str(tmp_path / "curl.log"),
         "GLOVEBOX_LOG": str(tmp_path / "glovebox.log"),
+        # A helper beat spawns the denial watcher; suppress it by default so
+        # every helper test doesn't leave a 10-minute background process in the
+        # tmp dir. Watcher tests opt back in (or run --watch directly).
+        "CLAUDE_ACCOUNT_NO_WATCH": "1",
         "NS": namespaces,
         "TOKS": " ".join(f"{k}={v}" for k, v in held.items()),
         "FX": " ".join(f"{k}={v}" for k, v in fx.items()),
@@ -554,3 +559,173 @@ def test_settings_wire_the_helper_with_a_ttl_shorter_than_the_probe_interval(
     assert "claude-account --helper" in settings["apiKeyHelper"]
     ttl_ms = int(settings["env"]["CLAUDE_CODE_API_KEY_HELPER_TTL_MS"])
     assert ttl_ms < 300_000
+
+
+# ── --watch mode (the denial watcher) ───────────────────────────────────────
+#
+# The watcher is what makes rotation take seconds instead of a probe interval:
+# it tails the session transcripts, and a usage-limit API error triggers an
+# immediate probe-and-reselect. These drive the real `--watch` loop as a
+# subprocess with a fast poll and observe the shared state it writes.
+
+DENIAL_LINE = (
+    '{"type":"assistant","isApiErrorMessage":true,'
+    '"message":"Claude usage limit reached · resets 3:45pm"}\n'
+)
+
+
+def _start_watcher(
+    tmp_path: Path,
+    fx: dict[str, str],
+    tokens: dict[str, str] | None = None,
+    **extra: str,
+) -> subprocess.Popen[str]:
+    bin_dir = tmp_path / "bin"
+    _stub(bin_dir / "envchain", _ENVCHAIN_STUB)
+    _stub(bin_dir / "curl", _CURL_STUB)
+    held = TOKENS if tokens is None else tokens
+    transcripts = tmp_path / "home" / ".claude" / "projects" / "p"
+    transcripts.mkdir(parents=True, exist_ok=True)
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "HOME": str(tmp_path / "home"),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+        "CURL_LOG": str(tmp_path / "curl.log"),
+        "GLOVEBOX_LOG": str(tmp_path / "glovebox.log"),
+        "NS": "one two three",
+        "TOKS": " ".join(f"{k}={v}" for k, v in held.items()),
+        "FX": " ".join(f"{k}={v}" for k, v in fx.items()),
+        "CLAUDE_ACCOUNT_WATCH_POLL": "0.1",
+        **extra,
+    }
+    return subprocess.Popen(
+        ["bash", str(SCRIPT), "--watch"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def _transcript(tmp_path: Path) -> Path:
+    return tmp_path / "home" / ".claude" / "projects" / "p" / "session.jsonl"
+
+
+def _wait_for(predicate, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _stop(proc: subprocess.Popen[str]) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def test_watcher_rotates_within_seconds_of_a_transcript_denial(
+    tmp_path: Path,
+) -> None:
+    """End-to-end fast path: denial line lands in a transcript → the watcher
+    probes the active account, records its cooldown, and converges glovebox on
+    the next one — all without waiting out the probe interval."""
+    _stub(tmp_path / "bin" / "glovebox", _GLOVEBOX_STUB)
+    # 'one' is the active account (fresh .ok + current record, as a helper beat
+    # would leave them); its next probe reports the limit.
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True)
+    (state / "one.ok").touch()
+    (state / "current").write_text("one\n", encoding="utf-8")
+    proc = _start_watcher(
+        tmp_path,
+        fx={"one": f"429|rejected|{FAR_FUTURE}", "two": "200|allowed|"},
+    )
+    try:
+        time.sleep(0.3)  # let the first scan pass so the append is "new"
+        _transcript(tmp_path).write_text(DENIAL_LINE, encoding="utf-8")
+        assert _wait_for(lambda: _until_file(tmp_path, "one").exists())
+        assert (
+            _until_file(tmp_path, "one").read_text(encoding="utf-8").strip()
+            == FAR_FUTURE
+        )
+        assert _wait_for(lambda: (tmp_path / "glovebox.log").exists())
+        calls = (tmp_path / "glovebox.log").read_text(encoding="utf-8").splitlines()
+        assert any("login-sync" in c and TOKENS["two"] in c for c in calls)
+        assert (state / "current").read_text(encoding="utf-8").strip() == "two"
+    finally:
+        _stop(proc)
+
+
+def test_watcher_ignores_lines_that_are_not_usage_denials(tmp_path: Path) -> None:
+    """The transcript grep is trigger-only, so ordinary lines — even ones
+    mentioning errors — must not spend probes."""
+    proc = _start_watcher(tmp_path, fx={"one": "200|allowed|"})
+    try:
+        time.sleep(0.3)
+        _transcript(tmp_path).write_text(
+            '{"type":"assistant","message":"discussing rate limits in prose"}\n'
+            '{"type":"assistant","isApiErrorMessage":true,"message":"overloaded"}\n',
+            encoding="utf-8",
+        )
+        time.sleep(1.0)
+        assert not _requests(tmp_path)
+    finally:
+        _stop(proc)
+
+
+def test_watcher_self_exits_when_no_helper_heartbeat_remains(tmp_path: Path) -> None:
+    """The watcher must live exactly as long as sessions do — a stale
+    heartbeat means every session is gone, and lingering would leave a
+    process nothing owns."""
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True)
+    hb = state / "watcher.heartbeat"
+    hb.touch()
+    stale = time.time() - 100
+    os.utime(hb, (stale, stale))
+    proc = _start_watcher(tmp_path, fx={}, CLAUDE_ACCOUNT_WATCH_IDLE_EXIT="1")
+    try:
+        assert _wait_for(lambda: proc.poll() is not None), "watcher did not exit"
+        assert not (state / "watcher.pid").exists()
+    finally:
+        _stop(proc)
+
+
+def test_helper_respawns_a_dead_watcher_and_feeds_the_heartbeat(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True)
+    (state / "watcher.pid").write_text("999999999\n", encoding="utf-8")
+    r = _run(
+        tmp_path,
+        "--helper",
+        fx={"one": "200|allowed|"},
+        CLAUDE_ACCOUNT_NO_WATCH="",
+        CLAUDE_ACCOUNT_WATCH_POLL="0.1",
+    )
+    assert r.returncode == 0
+    assert r.stdout == TOKENS["one"]
+    assert (state / "watcher.heartbeat").exists()
+
+    def _live_watcher() -> bool:
+        pid = (state / "watcher.pid").read_text(encoding="utf-8").strip()
+        if pid == "999999999" or not pid.isdigit():
+            return False
+        try:
+            os.kill(int(pid), 0)
+        except OSError:
+            return False
+        return True
+
+    try:
+        assert _wait_for(_live_watcher), "helper did not respawn the watcher"
+    finally:
+        pid = int((state / "watcher.pid").read_text(encoding="utf-8"))
+        with contextlib.suppress(OSError):
+            os.kill(pid, 15)
