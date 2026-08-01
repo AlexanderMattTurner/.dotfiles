@@ -50,6 +50,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/claude-account-lib.sh"
 # a helper beat must never block on them. The `current` record is what makes
 # this fire once per change rather than once per beat.
 _converge_glovebox() {
+    # CLAUDE_ACCOUNT_NO_CONVERGE is doctor's knob: its helper self-test must
+    # stay read-only, and a convergence it triggered could re-point live
+    # sandboxes the user pinned to another account on purpose.
+    [[ -n "${CLAUDE_ACCOUNT_NO_CONVERGE:-}" ]] && return 0
     local ns="$1" dir file cur tmp
     dir="$(_state_dir)"
     file="$dir/current"
@@ -83,7 +87,13 @@ _converge_glovebox() {
 # never in this shell (and never on an argv).
 _helper() {
     local ns="" rc=0
-    ns="$(select_account 1)" || rc=$?
+    # A machine with no subscription namespaces at all goes straight to the
+    # API-key fallback: calling select_account would print its seed-an-account
+    # guidance on EVERY beat — a nag every TTL on machines that deliberately
+    # run pay-per-token only. Doctor carries that guidance instead.
+    if [[ -n "$(_namespaces)" ]]; then
+        ns="$(select_account 1)" || rc=$?
+    fi
     if [[ -n "$ns" ]]; then
         _converge_glovebox "$ns"
         exec envchain "$ns" sh -c 'printf %s "$CLAUDE_CODE_OAUTH_TOKEN"'

@@ -468,6 +468,9 @@ def test_helper_falls_back_to_the_api_key_when_no_subscription_exists(
     assert r.returncode == 0
     assert r.stdout == "sk-ant-api-test"
     assert not _requests(tmp_path)
+    # The helper fires every TTL, so a machine deliberately running
+    # pay-per-token only must not be nagged about seeding accounts each beat.
+    assert r.stderr == ""
 
 
 def test_helper_falls_back_to_the_api_key_when_every_account_is_exhausted(
@@ -516,6 +519,25 @@ def test_an_account_change_converges_glovebox_once_not_per_beat(
     assert r.stdout == TOKENS["two"]
     time.sleep(0.3)
     assert len(_glovebox_calls(tmp_path, expect=1)) == 1
+
+
+def test_doctors_no_converge_knob_suppresses_the_glovebox_push(
+    tmp_path: Path,
+) -> None:
+    """doctor's helper self-test is read-only; without this knob it could
+    re-point live sandboxes a user pinned to another account on purpose."""
+    _stub(tmp_path / "bin" / "glovebox", _GLOVEBOX_STUB)
+    r = _run(
+        tmp_path,
+        "--helper",
+        fx={"one": "200|allowed|"},
+        CLAUDE_ACCOUNT_NO_CONVERGE="1",
+    )
+    assert r.stdout == TOKENS["one"]
+    time.sleep(0.3)
+    assert not (tmp_path / "glovebox.log").exists()
+    # The selection record is part of the convergence, not the health check.
+    assert not (tmp_path / "state" / "claude-accounts" / "current").exists()
 
 
 def test_settings_wire_the_helper_with_a_ttl_shorter_than_the_probe_interval(
