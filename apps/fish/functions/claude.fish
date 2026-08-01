@@ -20,8 +20,11 @@ function claude --wraps claude --description 'Claude Code via claude-guard, subs
     # Route through the rotation proxy only when at least one subscription account is
     # configured. With none, there is nothing to rotate, so launch straight through
     # (a bare CLAUDE_CODE_OAUTH_TOKEN in the environment, or the user's own login,
-    # still works).
-    if test -z "(claude-account --namespaces 2>/dev/null)"
+    # still works). The command substitution MUST be captured into a variable: fish
+    # does not run `(cmd)` inside double quotes, so `test -z "(cmd)"` would test a
+    # non-empty literal and never take this branch.
+    set -l subs (claude-account --namespaces 2>/dev/null)
+    if test -z "$subs"
         env VENICE_INFERENCE_KEY=$venice $claude_bin $argv
         return
     end

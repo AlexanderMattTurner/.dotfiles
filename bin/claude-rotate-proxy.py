@@ -49,14 +49,10 @@ CLAUDE_ACCOUNT = os.environ.get(
 )
 
 # The one line the child runs: print the Authorization header (token from the env,
-# never an argv) into curl's -H @-, with the body and the forwarded headers read
-# from non-secret files. Kept as a constant so the token-handling contract is read
-# in one place.
-_CHILD_SCRIPT = (
-    'printf "Authorization: Bearer %s\\n" "$CLAUDE_CODE_OAUTH_TOKEN" | '
-    'curl -sS -N -D - -o - -X POST '
-    '--data-binary @"$1" -H @"$2" -H @- "$3"'
-)
+# never an argv) into curl's -H @-, then exec the curl argv the proxy built. The
+# token reaches curl only over that pipe — on no argv (printf is a builtin), in no
+# file. Kept as a constant so the token-handling contract is read in one place.
+_CHILD_SCRIPT = 'printf "Authorization: Bearer %s\\n" "$CLAUDE_CODE_OAUTH_TOKEN" | exec "$@"'
 
 _last_request = time.monotonic()
 _last_request_lock = threading.Lock()
@@ -132,8 +128,25 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args: object, **kwargs: object) -> None:
         pass
 
+    # Anthropic's API is POST for /v1/messages, but the client may GET other paths
+    # through the base URL; a method with no handler would 501 and break the session,
+    # so both route through one handler.
+    def do_GET(self) -> None:
+        self._handle()
+
     def do_POST(self) -> None:
+        self._handle()
+
+    def _handle(self) -> None:
         _mark_request()
+        # A chunked request body carries no content-length, so reading by
+        # content-length would silently forward an EMPTY body. Fail loud instead of
+        # corrupting the request; the client always sends content-length for JSON.
+        if "chunked" in self.headers.get("transfer-encoding", "").lower():
+            self._reply_plain(
+                400, b"claude-rotate-proxy: chunked request bodies are not supported.\n"
+            )
+            return
         length = int(self.headers.get("content-length", 0))
         body = self.rfile.read(length) if length else b""
         # Drop hop-by-hop and the client's own credential headers: the sentinel
@@ -179,43 +192,64 @@ class Handler(BaseHTTPRequestHandler):
         so curl's single stdin is free for the Authorization header."""
         body_file = tempfile.NamedTemporaryFile(delete=False)
         hdr_file = tempfile.NamedTemporaryFile(delete=False, mode="w")
+        proc: "subprocess.Popen | None" = None
         try:
             body_file.write(body)
             body_file.close()
             hdr_file.write("\n".join(forwarded) + ("\n" if forwarded else ""))
             hdr_file.close()
-            argv = [
-                "envchain",
-                namespace,
-                "bash",
-                "-c",
-                _CHILD_SCRIPT,
-                "_",
-                body_file.name,
-                hdr_file.name,
-                f"{UPSTREAM}{self.path}",
-            ]
+            curl = ["curl", "-sS", "-N", "-D", "-", "-o", "-", "-X", self.command]
+            if body:
+                curl += ["--data-binary", "@" + body_file.name]
+            curl += ["-H", "@" + hdr_file.name, "-H", "@-", f"{UPSTREAM}{self.path}"]
+            argv = ["envchain", namespace, "bash", "-c", _CHILD_SCRIPT, "_", *curl]
             try:
                 proc = subprocess.Popen(argv, stdout=subprocess.PIPE)
             except OSError:
                 return None
-            header_blob = self._read_header_block(proc.stdout)
-            if header_blob is None:
+            parsed = self._read_response(proc.stdout)
+            if parsed is None:
                 proc.wait()
+                proc = None
                 return None
-            status, headers = self._parse_headers(header_blob)
-            return _Upstream(status, headers, proc)
+            status, headers = parsed
+            result = _Upstream(status, headers, proc)
+            proc = None  # ownership passes to the caller, which reaps it
+            return result
+        except Exception:
+            # A parse failure (malformed status line) must not leak the curl child.
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+            raise
         finally:
-            # Safe to unlink now: _read_header_block only returns once curl has
-            # produced response headers, which means it already sent the request and
-            # therefore already read the body (--data-binary @file) and header
-            # (-H @file) files. On the early-return paths curl never started or is
-            # dead, so the files are equally free to remove.
+            if proc is not None:
+                proc.wait()
+            # Safe to unlink now: _read_response only returns once curl has produced
+            # response headers, which means it already sent the request and therefore
+            # already read the body (--data-binary @file) and header (-H @file) files.
+            # On the early-return paths curl never started or is dead, so the files
+            # are equally free to remove.
             for path in (body_file.name, hdr_file.name):
                 try:
                     os.unlink(path)
                 except OSError:
                     pass
+
+    def _read_response(self, stream) -> "tuple[int, list[tuple[str, str]]] | None":
+        """The final response's (status, headers), skipping any interim 1xx blocks
+        curl may emit; None if the stream ends or the status line will not parse (so
+        a malformed upstream reply becomes a clean 502, not an unhandled exception)."""
+        for _ in range(8):
+            blob = self._read_header_block(stream)
+            if blob is None:
+                return None
+            try:
+                status, headers = self._parse_headers(blob)
+            except (ValueError, IndexError):
+                return None
+            if status >= 200:
+                return status, headers
+        return None
 
     @staticmethod
     def _read_header_block(stream) -> "bytes | None":

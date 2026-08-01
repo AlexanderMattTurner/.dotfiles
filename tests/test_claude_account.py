@@ -611,9 +611,7 @@ def _fake_anthropic(port: int, seen: list[str]):
         def log_message(self, *a: object) -> None:
             pass
 
-        def do_POST(self) -> None:
-            n = int(self.headers.get("content-length", 0))
-            self.rfile.read(n)
+        def _respond(self) -> None:
             auth = self.headers.get("authorization", "")
             token = auth.removeprefix("Bearer ").strip()
             seen.append(token)
@@ -633,9 +631,54 @@ def _fake_anthropic(port: int, seen: list[str]):
             self.end_headers()
             self.wfile.write(body)
 
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            self._respond()
+
+        def do_GET(self) -> None:
+            self._respond()
+
     server = ThreadingHTTPServer(("127.0.0.1", port), H)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+def _start_proxy(
+    tmp_path: Path, fake_port: int, proxy_port: int, seed: tuple[str, ...]
+) -> subprocess.Popen[bytes]:
+    """Stub envchain (real curl, real bash — only the store is faked), seed a fresh
+    healthy stamp per SEED account so --pick serves without a probe, and launch the
+    real proxy pointed at the fake upstream."""
+    bin_dir = tmp_path / "bin"
+    _stub(bin_dir / "envchain", _ENVCHAIN_STUB)
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True, exist_ok=True)
+    for ns in seed:
+        (state / f"{ns}.ok").touch()
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "HOME": str(tmp_path / "home"),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+        "NS": "one two",
+        "TOKS": "one=tok-one two=tok-two",
+        "CLAUDE_ACCOUNT_NAMESPACES": " ".join(seed),
+        "CLAUDE_ACCOUNT_PROBE_URL": f"http://127.0.0.1:{fake_port}/v1/messages",
+        "CLAUDE_ROTATE_PROXY_PORT": str(proxy_port),
+        "CLAUDE_ROTATE_PROXY_UPSTREAM": f"http://127.0.0.1:{fake_port}",
+        "CLAUDE_ROTATE_PROXY_ACCOUNT_CLI": str(SCRIPT),
+    }
+    return subprocess.Popen(
+        ["python3", str(PROXY)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+
+
+def _kill_proxy(proxy: subprocess.Popen, server) -> None:
+    proxy.terminate()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proxy.wait(timeout=3)
+    if proxy.poll() is None:
+        proxy.kill()
+    server.shutdown()
 
 
 def test_the_proxy_rotates_a_live_request_past_an_exhausted_account(
@@ -645,34 +688,9 @@ def test_the_proxy_rotates_a_live_request_past_an_exhausted_account(
     proxy_port = _free_port()
     seen: list[str] = []
     server = _fake_anthropic(fake_port, seen)
-
-    bin_dir = tmp_path / "bin"
-    _stub(bin_dir / "envchain", _ENVCHAIN_STUB)  # real curl, real bash; only the store is faked
-    state = tmp_path / "state" / "claude-accounts"
-    state.mkdir(parents=True)
     # Fresh stamps in preference order 'one' then 'two', so --pick serves 'one'
     # first without a probe; the proxy's 429 on 'one' drives the rotation to 'two'.
-    (state / "one.ok").touch()
-    (state / "two.ok").touch()
-
-    env = {
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "HOME": str(tmp_path / "home"),
-        "XDG_STATE_HOME": str(tmp_path / "state"),
-        "NS": "one two",
-        "TOKS": "one=tok-one two=tok-two",
-        "CLAUDE_ACCOUNT_NAMESPACES": "one two",
-        "CLAUDE_ACCOUNT_PROBE_URL": f"http://127.0.0.1:{fake_port}/v1/messages",
-        "CLAUDE_ROTATE_PROXY_PORT": str(proxy_port),
-        "CLAUDE_ROTATE_PROXY_UPSTREAM": f"http://127.0.0.1:{fake_port}",
-        "CLAUDE_ROTATE_PROXY_ACCOUNT_CLI": str(SCRIPT),
-    }
-    proxy = subprocess.Popen(
-        ["python3", str(PROXY)],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    proxy = _start_proxy(tmp_path, fake_port, proxy_port, seed=("one", "two"))
     try:
         assert _wait_port(proxy_port), "proxy never started listening"
         import urllib.error
@@ -700,9 +718,28 @@ def test_the_proxy_rotates_a_live_request_past_an_exhausted_account(
             >= int(time.time())
         )
     finally:
-        proxy.terminate()
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proxy.wait(timeout=3)
-        if proxy.poll() is None:
-            proxy.kill()
-        server.shutdown()
+        _kill_proxy(proxy, server)
+
+
+def test_the_proxy_passes_a_non_post_request_through(tmp_path: Path) -> None:
+    """The client may GET a path through ANTHROPIC_BASE_URL; a method with no
+    handler would 501 and break the session. The proxy rewrites the token and
+    forwards it like any other request."""
+    fake_port = _free_port()
+    proxy_port = _free_port()
+    seen: list[str] = []
+    server = _fake_anthropic(fake_port, seen)
+    proxy = _start_proxy(tmp_path, fake_port, proxy_port, seed=("two",))
+    try:
+        assert _wait_port(proxy_port), "proxy never started listening"
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{proxy_port}/v1/models", method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            assert resp.status == 200
+            assert b"served-by-two" in resp.read()
+        assert seen == ["tok-two"]
+    finally:
+        _kill_proxy(proxy, server)
