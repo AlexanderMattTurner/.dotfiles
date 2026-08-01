@@ -307,6 +307,9 @@ fi
 
 if ! command -v envchain >/dev/null 2>&1; then
     skip "claude-account helper" "envchain not installed"
+    # The two knobs keep the dry run trace-free: no glovebox convergence, no
+    # `current` record, no spawned watcher. It may still spend a probe and
+    # refresh the shared verdict cache — the same read any helper beat does.
 elif CLAUDE_ACCOUNT_NO_CONVERGE=1 CLAUDE_ACCOUNT_NO_WATCH=1 "$DOTFILES_DIR/bin/claude-account.bash" --helper >/dev/null 2>&1; then
     pass "claude-account --helper serves a credential"
 else

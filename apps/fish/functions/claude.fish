@@ -9,6 +9,10 @@ function claude --wraps claude --description 'Claude Code via claude-guard, cred
     # Only override the inherited environment when envchain actually returns a
     # value. A failed lookup (locked keychain, unseeded 'ai' namespace) must not
     # clobber a working key already present in the environment with an empty one.
+    if set -q ANTHROPIC_API_KEY
+        echo "claude: ANTHROPIC_API_KEY is exported — it outranks the apiKeyHelper, so this session bills the API per-token and mid-session account rotation is off" >&2
+    end
+
     set -l venice (envchain ai printenv VENICE_INFERENCE_KEY 2>/dev/null)
     test -n "$venice"; or set venice $VENICE_INFERENCE_KEY
 

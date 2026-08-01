@@ -55,6 +55,25 @@ set -euo pipefail
 # shellcheck source=bin/lib/claude-account-lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/claude-account-lib.sh"
 
+# Record NAME as the identity the helper last served — a namespace, or
+# __api-key__ for the pay-per-token fallback. This is the change-latch for
+# both the glovebox convergence and the helper's switch diagnostics. Gated on
+# CLAUDE_ACCOUNT_NO_CONVERGE so an invocation that must leave no trace
+# (doctor's self-test) records nothing.
+_record_current() {
+    [[ -n "${CLAUDE_ACCOUNT_NO_CONVERGE:-}" ]] && return 0
+    local dir file tmp
+    dir="$(_state_dir)"
+    mkdir -p "$dir" 2>/dev/null || true
+    [[ -d "$dir" ]] || return 0
+    file="$dir/current"
+    tmp="$file.$$"
+    if printf '%s\n' "$1" >"$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$file" 2>/dev/null || true
+    fi
+    return 0
+}
+
 # When the helper's selection CHANGES, converge running glovebox sandboxes on
 # the new account: the in-VM claude sends a constant sentinel and the host-side
 # sbx proxy swaps in whatever token `glovebox login-sync` last registered, so
@@ -63,21 +82,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/claude-account-lib.sh"
 # a helper beat must never block on them. The `current` record is what makes
 # this fire once per change rather than once per beat.
 _converge_glovebox() {
-    # CLAUDE_ACCOUNT_NO_CONVERGE is doctor's knob: its helper self-test must
-    # stay read-only, and a convergence it triggered could re-point live
-    # sandboxes the user pinned to another account on purpose.
+    # CLAUDE_ACCOUNT_NO_CONVERGE is doctor's knob: a convergence triggered by a
+    # health check could re-point live sandboxes the user pinned to another
+    # account on purpose.
     [[ -n "${CLAUDE_ACCOUNT_NO_CONVERGE:-}" ]] && return 0
-    local ns="$1" dir file cur tmp
-    dir="$(_state_dir)"
-    file="$dir/current"
-    cur="$(cat "$file" 2>/dev/null || true)"
+    local ns="$1" cur
+    cur="$(cat "$(_state_dir)/current" 2>/dev/null || true)"
     [[ "$cur" == "$ns" ]] && return 0
-    mkdir -p "$dir" 2>/dev/null || true
-    [[ -d "$dir" ]] || return 0
-    tmp="$file.$$"
-    if printf '%s\n' "$ns" >"$tmp" 2>/dev/null; then
-        mv -f "$tmp" "$file" 2>/dev/null || true
-    fi
+    _record_current "$ns"
     command -v glovebox >/dev/null 2>&1 || return 0
     printf 'claude-account: switching to %s — converging glovebox sandboxes.\n' "$ns" >&2
     (envchain "$ns" glovebox login-sync >/dev/null 2>&1 &)
@@ -90,7 +102,7 @@ _watcher_heartbeat_file() { printf '%s/watcher.heartbeat\n' "$(_state_dir)"; }
 # Keep one denial watcher alive per machine. Called from every helper beat:
 # touches the heartbeat that keeps the watcher from idling out, and respawns it
 # when the recorded pid is gone. CLAUDE_ACCOUNT_NO_WATCH is for invocations
-# that must not leave a process behind (doctor's read-only self-test, tests).
+# that must not leave a process behind (doctor's self-test, tests).
 _ensure_watcher() {
     [[ -n "${CLAUDE_ACCOUNT_NO_WATCH:-}" ]] && return 0
     local dir pid
@@ -99,19 +111,15 @@ _ensure_watcher() {
     [[ -d "$dir" ]] || return 0
     touch "$(_watcher_heartbeat_file)" 2>/dev/null || true
     pid="$(cat "$(_watcher_pid_file)" 2>/dev/null || true)"
-    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    # The pid must belong to an actual watcher, not merely be alive: a state
+    # dir surviving a reboot can record a pid the kernel has since recycled to
+    # an unrelated process, and trusting it would suppress the watcher forever.
+    if [[ "$pid" =~ ^[0-9]+$ ]] &&
+        ps -p "$pid" -o args= 2>/dev/null | grep -q -- --watch; then
         return 0
     fi
     ("${BASH_SOURCE[0]}" --watch >/dev/null 2>&1 &)
     return 0
-}
-
-# The mtime of FILE, or 0 when unreadable (GNU stat, BSD fallback).
-_mtime() {
-    local m
-    m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || m=0
-    [[ "$m" =~ ^[0-9]+$ ]] || m=0
-    printf '%s' "$m"
 }
 
 # True (0) when a transcript modified since the last scan carries a fresh
@@ -133,7 +141,7 @@ _watch_saw_denial() {
     ((${#fresh[@]})) || return 1
     for file in "${fresh[@]}"; do
         if tail -n 25 "$file" 2>/dev/null |
-            grep -q -iE '"isApiErrorMessage": ?true.*(usage limit|rate.?limit|429|529)'; then
+            grep -q -iE '"isApiErrorMessage": ?true.*(usage limit|rate.?limit)'; then
             return 0
         fi
     done
@@ -154,7 +162,9 @@ _watch() {
     hb="$(_watcher_heartbeat_file)"
     [[ -e "$hb" ]] || touch "$hb" 2>/dev/null || true
     tmp="$pidfile.$$"
-    printf '%s\n' "$$" >"$tmp" 2>/dev/null && mv -f "$tmp" "$pidfile" 2>/dev/null || return 0
+    if ! { printf '%s\n' "$$" >"$tmp" 2>/dev/null && mv -f "$tmp" "$pidfile" 2>/dev/null; }; then
+        return 0
+    fi
     while :; do
         [[ "$(cat "$pidfile" 2>/dev/null)" == "$$" ]] || return 0
         now="$(date +%s)"
@@ -194,25 +204,47 @@ _watch() {
 # shellcheck disable=SC2016  # the single quotes are the security property on
 # every sh -c body below: the credential must expand inside the envchain CHILD,
 # never in this shell (and never on an argv).
+# Selection diagnostics are LATCHED to serve-identity changes: this runs every
+# TTL, so replaying a cooldown-skip or exhaustion message each beat would nag
+# forever; the beat that actually switches identity emits them once.
 _helper() {
-    local ns="" rc=0
+    local ns="" rc=0 dir errf cur served=""
     _ensure_watcher
-    # A machine with no subscription namespaces at all goes straight to the
-    # API-key fallback: calling select_account would print its seed-an-account
-    # guidance on EVERY beat — a nag every TTL on machines that deliberately
-    # run pay-per-token only. Doctor carries that guidance instead.
-    if [[ -n "$(_namespaces)" ]]; then
-        ns="$(select_account 1)" || rc=$?
-    fi
+    dir="$(_state_dir)"
+    mkdir -p "$dir" 2>/dev/null || true
+    errf=/dev/null
+    [[ -d "$dir" ]] && errf="$dir/helper.stderr"
+    ns="$(select_account 1 quiet-empty 2>"$errf")" || rc=$?
+    cur="$(cat "$dir/current" 2>/dev/null || true)"
     if [[ -n "$ns" ]]; then
-        _converge_glovebox "$ns"
-        exec envchain "$ns" sh -c 'printf %s "$CLAUDE_CODE_OAUTH_TOKEN"'
+        # The winner must actually HOLD a token: a still-fresh healthy stamp
+        # (or an explicit CLAUDE_ACCOUNT_NAMESPACES entry, which is listed
+        # unverified) can name a namespace whose keychain entry was since
+        # emptied, and serving "" with exit 0 would hand every running session
+        # an empty credential instead of the fallback.
+        # shellcheck disable=SC2016  # must expand in the child, never here
+        if envchain "$ns" sh -c '[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]' 2>/dev/null; then
+            served="$ns"
+        else
+            _clear_ok "$ns"
+            printf 'claude-account: %s no longer holds a CLAUDE_CODE_OAUTH_TOKEN — falling back.\n' "$ns" >&2
+        fi
+    fi
+    if [[ -n "$served" ]]; then
+        [[ "$served" != "$cur" ]] && cat "$errf" >&2
+        _converge_glovebox "$served"
+        exec envchain "$served" sh -c 'printf %s "$CLAUDE_CODE_OAUTH_TOKEN"'
     fi
     if envchain ai sh -c '[ -n "${ANTHROPIC_API_KEY:-}" ]' 2>/dev/null; then
-        ((rc == 1)) &&
-            printf 'claude-account: every subscription account is exhausted — serving the pay-per-token ANTHROPIC_API_KEY from envchain ai until one resets.\n' >&2
+        if [[ "$cur" != __api-key__ ]]; then
+            cat "$errf" >&2
+            ((rc == 1)) &&
+                printf 'claude-account: every subscription account is exhausted — serving the pay-per-token ANTHROPIC_API_KEY from envchain ai until one resets.\n' >&2
+            _record_current __api-key__
+        fi
         exec envchain ai sh -c 'printf %s "$ANTHROPIC_API_KEY"'
     fi
+    cat "$errf" >&2
     printf 'claude-account: no usable Claude credential — no subscription account is available and envchain ai holds no ANTHROPIC_API_KEY (seed with bwseed).\n' >&2
     return 1
 }

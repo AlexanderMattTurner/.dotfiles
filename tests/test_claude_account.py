@@ -434,7 +434,7 @@ def test_a_cooldown_recorded_by_the_helper_is_honored_by_a_launch(
 def test_a_fresh_healthy_verdict_is_trusted_without_a_new_probe(
     tmp_path: Path,
 ) -> None:
-    """The .ok stamp is what caps probe spend: with a 60s helper TTL, an
+    """The .ok stamp is what caps probe spend: at the 10s helper TTL, an
     unstamped helper would bill one probe per beat per machine against the very
     usage limit being conserved."""
     _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
@@ -725,6 +725,82 @@ def test_helper_respawns_a_dead_watcher_and_feeds_the_heartbeat(
 
     try:
         assert _wait_for(_live_watcher), "helper did not respawn the watcher"
+    finally:
+        pid = int((state / "watcher.pid").read_text(encoding="utf-8"))
+        with contextlib.suppress(OSError):
+            os.kill(pid, 15)
+
+
+def test_a_launch_probes_even_when_the_helper_stamp_is_fresh(tmp_path: Path) -> None:
+    """Launcher mode never trusts the stamp — a fresh launch is supposed to
+    spend one real probe rather than inherit a helper verdict."""
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True)
+    (state / "one.ok").touch()
+    r = _run(tmp_path, "env", fx={"one": "200|allowed|"})
+    assert r.returncode == 0
+    assert len(_requests(tmp_path)) == 1
+
+
+def test_helper_never_serves_an_empty_token(tmp_path: Path) -> None:
+    """A fresh healthy stamp can outlive the keychain entry (or an explicit
+    CLAUDE_ACCOUNT_NAMESPACES lists a namespace unverified); serving "" with
+    exit 0 would hand every running session an empty credential. The helper
+    must verify the winner holds a token and fall back."""
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True)
+    (state / "one.ok").touch()
+    r = _run(
+        tmp_path,
+        "--helper",
+        fx={},
+        tokens={},
+        namespaces="one",
+        CLAUDE_ACCOUNT_NAMESPACES="one",
+        AI_KEY="sk-ant-api-test",
+    )
+    assert r.returncode == 0
+    assert r.stdout == "sk-ant-api-test"
+    assert "no longer holds" in r.stderr
+
+
+def test_the_exhaustion_notice_prints_once_not_every_beat(tmp_path: Path) -> None:
+    """The helper fires every TTL; diagnostics are latched to serve-identity
+    changes so the all-exhausted state nags once, not every 10 seconds."""
+    fx = {"one": f"429|rejected|{FAR_FUTURE}"}
+    first = _run(tmp_path, "--helper", fx=fx, AI_KEY="sk-ant-api-test")
+    assert first.stdout == "sk-ant-api-test"
+    assert "every subscription account is exhausted" in first.stderr
+    second = _run(tmp_path, "--helper", fx=fx, AI_KEY="sk-ant-api-test")
+    assert second.stdout == "sk-ant-api-test"
+    assert second.stderr == ""
+
+
+def test_a_recycled_pid_in_the_pidfile_does_not_suppress_the_watcher(
+    tmp_path: Path,
+) -> None:
+    """kill -0 alone would trust any live process; after a reboot the recorded
+    pid can belong to something unrelated (pid 1 here), which must read as
+    'no watcher' so one is respawned."""
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True)
+    (state / "watcher.pid").write_text("1\n", encoding="utf-8")
+    r = _run(
+        tmp_path,
+        "--helper",
+        fx={"one": "200|allowed|"},
+        CLAUDE_ACCOUNT_NO_WATCH="",
+        CLAUDE_ACCOUNT_WATCH_POLL="0.1",
+        CLAUDE_ACCOUNT_WATCH_IDLE_EXIT="600",
+    )
+    assert r.returncode == 0
+
+    def _real_watcher() -> bool:
+        pid = (state / "watcher.pid").read_text(encoding="utf-8").strip()
+        return pid.isdigit() and pid != "1"
+
+    try:
+        assert _wait_for(_real_watcher), "helper trusted the recycled pid"
     finally:
         pid = int((state / "watcher.pid").read_text(encoding="utf-8"))
         with contextlib.suppress(OSError):

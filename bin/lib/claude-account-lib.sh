@@ -56,20 +56,25 @@ _set_cooldown() {
     return 0
 }
 
+# The mtime of FILE, or 0 when unreadable (GNU stat, BSD/macOS fallback).
+_mtime() {
+    local m
+    m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || m=0
+    [[ "$m" =~ ^[0-9]+$ ]] || m=0
+    printf '%s' "$m"
+}
+
 # True (0) while NAMESPACE's last healthy probe is younger than
-# CLAUDE_ACCOUNT_PROBE_INTERVAL seconds (default 300). The interval MUST exceed
-# the helper's re-invocation TTL (settings.json pins 60s), or the stamp
-# suppresses nothing and every helper beat spends a live request. It is also
-# the worst-case time for a helper to NOTICE the current account exhausted, so
-# it is the cost/latency dial: probing faster buys faster rotation, paid for
-# in requests against the very usage limit being conserved.
+# CLAUDE_ACCOUNT_PROBE_INTERVAL seconds (default 300). The interval MUST
+# exceed the helper's re-invocation TTL or the stamp suppresses nothing and
+# every helper beat spends a live request. It is also the backstop time for a
+# helper to NOTICE the current account exhausted when the watcher misses the
+# denial, so it is the cost/latency dial: probing faster buys faster fallback
+# rotation, paid for in requests against the very usage limit being conserved.
 _ok_fresh() {
-    local file mtime
-    file="$(_ok_file "$1")"
-    [[ -e "$file" ]] || return 1
-    # GNU stat and BSD/macOS stat spell "mtime" differently; try both.
-    mtime="$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null)" || return 1
-    [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+    local mtime
+    mtime="$(_mtime "$(_ok_file "$1")")"
+    ((mtime > 0)) || return 1
     (($(date +%s) - mtime < ${CLAUDE_ACCOUNT_PROBE_INTERVAL:-300}))
 }
 
@@ -219,17 +224,22 @@ _reset_human() {
 # Echo the first usable namespace, walking them in preference order. With
 # TRUST_OK=1 (the helper's beat cadence) a namespace whose healthy-probe stamp
 # is still fresh is chosen without spending a request; TRUST_OK=0 (a launch)
-# probes every candidate. ONLY the chosen namespace lands on stdout — every
-# diagnostic goes to stderr, because the helper contract hands stdout verbatim
-# to Claude Code as a credential. Returns 1 when every configured account is
-# unavailable, 2 when none is configured at all.
+# probes every candidate. A second argument "quiet-empty" silences the
+# nothing-configured guidance — the helper fires every TTL and must not nag a
+# deliberately API-key-only machine each beat (doctor carries that guidance).
+# ONLY the chosen namespace lands on stdout — every diagnostic goes to stderr,
+# because the helper contract hands stdout verbatim to Claude Code as a
+# credential. Returns 1 when every configured account is unavailable, 2 when
+# none is configured at all.
 select_account() {
-    local trust_ok="$1"
+    local trust_ok="$1" on_empty="${2:-}"
     local -a namespaces=()
     mapfile -t namespaces < <(_namespaces)
     if ((${#namespaces[@]} == 0)); then
-        printf 'claude-account: no envchain namespace holds a CLAUDE_CODE_OAUTH_TOKEN.\n' >&2
-        printf '  capture one with '\''claude setup-token'\'', then: envchain --set <namespace> CLAUDE_CODE_OAUTH_TOKEN\n' >&2
+        if [[ "$on_empty" != quiet-empty ]]; then
+            printf 'claude-account: no envchain namespace holds a CLAUDE_CODE_OAUTH_TOKEN.\n' >&2
+            printf '  capture one with '\''claude setup-token'\'', then: envchain --set <namespace> CLAUDE_CODE_OAUTH_TOKEN\n' >&2
+        fi
         return 2
     fi
 
