@@ -290,6 +290,29 @@ else
     skip "envchain" "not installed"
 fi
 
+# A failing apiKeyHelper does NOT fall through to other credentials — Claude
+# Code hard-fails requests after three helper failures — so drift in the
+# settings wiring or a helper with nothing to serve breaks every claude
+# session. Check both here, where the fix is nameable.
+claude_settings="$HOME/.claude/settings.json"
+if ! command -v jq >/dev/null 2>&1; then
+    skip "apiKeyHelper wiring" "jq not installed"
+elif [[ ! -f "$claude_settings" ]]; then
+    skip "apiKeyHelper wiring" "\$HOME/.claude/settings.json missing (run setup.bash)"
+elif jq -re '.apiKeyHelper // ""' "$claude_settings" 2>/dev/null | grep -q 'claude-account --helper'; then
+    pass "apiKeyHelper points at claude-account --helper"
+else
+    fail "apiKeyHelper wiring" "\$HOME/.claude/settings.json lacks apiKeyHelper -> 'claude-account --helper' (settings drift)"
+fi
+
+if ! command -v envchain >/dev/null 2>&1; then
+    skip "claude-account helper" "envchain not installed"
+elif "$DOTFILES_DIR/bin/claude-account.bash" --helper >/dev/null 2>&1; then
+    pass "claude-account --helper serves a credential"
+else
+    fail "claude-account helper" "no usable credential — seed a subscription namespace (claude setup-token; envchain --set <ns> CLAUDE_CODE_OAUTH_TOKEN) or envchain ai ANTHROPIC_API_KEY (bwseed)"
+fi
+
 # ── Brewfile ────────────────────────────────────────────────────────────────
 section "Brewfile"
 

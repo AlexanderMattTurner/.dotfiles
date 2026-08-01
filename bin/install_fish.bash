@@ -137,6 +137,9 @@ else
             # that safe_link would then (correctly) refuse to clobber without
             # a backup-and-prompt, defeating the "always symlink" intent.
             [ "$rel" = "functions/fish_prompt.fish" ] && continue
+            # claude.fish is a managed_symlinks entry — copying it first would
+            # leave a real file that blocks the symlink, same as fish_prompt.
+            [ "$rel" = "functions/claude.fish" ] && continue
             dst="$FISH_CONFIG_DIR/$rel"
             [ -e "$dst" ] || { mkdir -p "$(dirname "$dst")" && cp -P "$src" "$dst"; }
         done < <(find "$DOTFILES_DIR/apps/fish" \( -type f -o -type l \) -print0 2>/dev/null)

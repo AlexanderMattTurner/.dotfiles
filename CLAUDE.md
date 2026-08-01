@@ -219,6 +219,21 @@ skip-on-missing to fail-on-missing).
   `CLAUDE_ACCOUNT_NAMESPACES`). Seed a Claude account with `claude
   setup-token` signed in as it, then `envchain --set <ns>
   CLAUDE_CODE_OAUTH_TOKEN`.
+- Mid-session rotation rides Claude Code's `apiKeyHelper`:
+  `apps/claude-user/settings.json` points it at `claude-account
+  --helper`, re-invoked every 60s (`CLAUDE_CODE_API_KEY_HELPER_TTL_MS`)
+  and on any 401. The helper serves the best subscription token, falls
+  back to `envchain ai`'s `ANTHROPIC_API_KEY`, and on an account change
+  fires `glovebox login-sync` so live sandboxes converge. A failing
+  helper hard-fails sessions (no fall-through), so it must succeed
+  whenever any credential exists — doctor checks both the wiring and a
+  dry run. Because an exported key outranks the helper, the `claude`
+  fish function must NOT export `ANTHROPIC_API_KEY` (an export also
+  makes subscription sessions bill the API per-token). The helper
+  printing the token on stdout is the sanctioned exception to "secrets
+  never on argv": stdout is a pipe read only by the invoking claude.
+  `CLAUDE_ACCOUNT_PROBE_INTERVAL` (default 300s, must exceed the helper
+  TTL) is the worst-case rotation latency and the probe-spend dial.
 - Secrets must never appear on argv. Pipe stdin → stdin between `bw`,
   `envchain`, and child commands. See `bin/bw-add-secret.bash` for the
   pattern.

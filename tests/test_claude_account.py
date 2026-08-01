@@ -7,8 +7,10 @@ and `curl` binaries on PATH, so the cooldown records and the exec'd environment
 are observed rather than asserted about.
 """
 
+import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -40,7 +42,9 @@ token=""
 for pair in ${TOKS:-}; do
     [ "${pair%%=*}" = "$ns" ] && token="${pair#*=}"
 done
-exec env CLAUDE_CODE_OAUTH_TOKEN="$token" "$@"
+api_key=""
+[ "$ns" = "ai" ] && api_key="${AI_KEY:-}"
+exec env CLAUDE_CODE_OAUTH_TOKEN="$token" ANTHROPIC_API_KEY="$api_key" "$@"
 """
 
 # A curl answering from the token handed to THIS invocation on stdin: $FX maps each
@@ -91,6 +95,7 @@ def _run(
         "HOME": str(tmp_path / "home"),
         "XDG_STATE_HOME": str(tmp_path / "state"),
         "CURL_LOG": str(tmp_path / "curl.log"),
+        "GLOVEBOX_LOG": str(tmp_path / "glovebox.log"),
         "NS": namespaces,
         "TOKS": " ".join(f"{k}={v}" for k, v in held.items()),
         "FX": " ".join(f"{k}={v}" for k, v in fx.items()),
@@ -358,3 +363,172 @@ def test_help_describes_the_command_without_touching_any_account(
     assert r.returncode == 0
     assert "claude-account" in r.stdout
     assert not _requests(tmp_path)
+
+
+# ── --helper mode (Claude Code apiKeyHelper) ────────────────────────────────
+#
+# stdout is handed to Claude Code verbatim as the session credential, so these
+# assert on r.stdout EXACTLY: any diagnostic leaking onto stdout corrupts the
+# credential of every running session.
+
+_GLOVEBOX_STUB = r"""#!/bin/bash
+printf 'argv: %s token: %s\n' "$*" "${CLAUDE_CODE_OAUTH_TOKEN:-}" >>"${GLOVEBOX_LOG:?}"
+"""
+
+
+def _glovebox_calls(tmp_path: Path, expect: int) -> list[str]:
+    """Lines the glovebox stub logged; polls because --helper detaches the call."""
+    log = tmp_path / "glovebox.log"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        if len(lines) >= expect:
+            return lines
+        time.sleep(0.05)
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def test_helper_prints_exactly_the_chosen_token_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == TOKENS["one"]
+
+
+def test_helper_hands_the_session_the_next_account_when_the_first_exhausts(
+    tmp_path: Path,
+) -> None:
+    """The rotation itself: a helper beat that finds the current account at its
+    limit records the cooldown and serves the next account's token, which the
+    running session picks up on its next credential refresh."""
+    r = _run(
+        tmp_path,
+        "--helper",
+        fx={"one": f"429|rejected|{FAR_FUTURE}", "two": "200|allowed|"},
+    )
+    assert r.returncode == 0
+    assert r.stdout == TOKENS["two"]
+    assert (
+        _until_file(tmp_path, "one").read_text(encoding="utf-8").strip() == FAR_FUTURE
+    )
+
+
+def test_a_cooldown_recorded_by_the_helper_is_honored_by_a_launch(
+    tmp_path: Path,
+) -> None:
+    """One shared state dir is what lets N sessions and launches rotate in
+    concert — a helper's verdict must not be re-derived by the next launch."""
+    _run(tmp_path, "--helper", fx={"one": f"429|rejected|{FAR_FUTURE}"})
+    r = _run(tmp_path, "env", fx={"two": "200|allowed|"})
+    assert r.returncode == 0
+    assert _exec_env(r)["CLAUDE_CODE_OAUTH_TOKEN"] == TOKENS["two"]
+    assert "one is at its usage limit" in r.stderr
+
+
+def test_a_fresh_healthy_verdict_is_trusted_without_a_new_probe(
+    tmp_path: Path,
+) -> None:
+    """The .ok stamp is what caps probe spend: with a 60s helper TTL, an
+    unstamped helper would bill one probe per beat per machine against the very
+    usage limit being conserved."""
+    _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+    assert r.stdout == TOKENS["one"]
+    assert len(_requests(tmp_path)) == 1
+
+
+def test_a_stale_healthy_verdict_is_re_probed(tmp_path: Path) -> None:
+    _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+    ok = tmp_path / "state" / "claude-accounts" / "one.ok"
+    stale = time.time() - 400  # past the 300s default probe interval
+    os.utime(ok, (stale, stale))
+    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+    assert r.stdout == TOKENS["one"]
+    assert len(_requests(tmp_path)) == 2
+
+
+def test_helper_keeps_the_token_off_every_argv(tmp_path: Path) -> None:
+    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+    assert r.returncode == 0
+    log = (tmp_path / "curl.log").read_text(encoding="utf-8")
+    argv_lines = [ln for ln in log.splitlines() if ln.startswith("argv: ")]
+    assert argv_lines
+    for token in TOKENS.values():
+        assert all(token not in ln for ln in argv_lines), argv_lines
+
+
+def test_helper_falls_back_to_the_api_key_when_no_subscription_exists(
+    tmp_path: Path,
+) -> None:
+    """A failing apiKeyHelper does not fall through to other credentials —
+    Claude Code hard-fails requests — so on a machine with no subscription
+    namespaces the helper must serve the pay-per-token key itself."""
+    r = _run(tmp_path, "--helper", fx={}, tokens={}, AI_KEY="sk-ant-api-test")
+    assert r.returncode == 0
+    assert r.stdout == "sk-ant-api-test"
+    assert not _requests(tmp_path)
+
+
+def test_helper_falls_back_to_the_api_key_when_every_account_is_exhausted(
+    tmp_path: Path,
+) -> None:
+    r = _run(
+        tmp_path,
+        "--helper",
+        fx={"one": "429|rejected|", "two": "429|rejected|", "three": "401||"},
+        AI_KEY="sk-ant-api-test",
+    )
+    assert r.returncode == 0
+    assert r.stdout == "sk-ant-api-test"
+    assert "pay-per-token" in r.stderr
+
+
+def test_helper_with_no_credential_at_all_fails_with_empty_stdout(
+    tmp_path: Path,
+) -> None:
+    r = _run(tmp_path, "--helper", fx={}, tokens={})
+    assert r.returncode == 1
+    assert r.stdout == ""
+    assert "bwseed" in r.stderr
+
+
+def test_an_account_change_converges_glovebox_once_not_per_beat(
+    tmp_path: Path,
+) -> None:
+    """Live glovebox sandboxes authenticate through a host-side proxy secret,
+    so a selection change must push the new account there ('glovebox
+    login-sync') — exactly once per change, or every beat would spawn sbx
+    store calls."""
+    _stub(tmp_path / "bin" / "glovebox", _GLOVEBOX_STUB)
+    r = _run(
+        tmp_path,
+        "--helper",
+        fx={"one": f"429|rejected|{FAR_FUTURE}", "two": "200|allowed|"},
+    )
+    assert r.stdout == TOKENS["two"]
+    calls = _glovebox_calls(tmp_path, expect=1)
+    assert len(calls) == 1
+    assert "login-sync" in calls[0]
+    assert TOKENS["two"] in calls[0]  # ran under the NEW account's envchain
+    # Same selection next beat: no new convergence call.
+    r = _run(tmp_path, "--helper", fx={"two": "200|allowed|"})
+    assert r.stdout == TOKENS["two"]
+    time.sleep(0.3)
+    assert len(_glovebox_calls(tmp_path, expect=1)) == 1
+
+
+def test_settings_wire_the_helper_with_a_ttl_shorter_than_the_probe_interval(
+    tmp_path: Path,
+) -> None:
+    """The settings symlinked to ~/.claude/settings.json must point at the
+    helper, and the re-invocation TTL must stay under the 300s probe interval
+    or the .ok stamp would never suppress a probe."""
+    settings = json.loads(
+        (DOTFILES / "apps" / "claude-user" / "settings.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "claude-account --helper" in settings["apiKeyHelper"]
+    ttl_ms = int(settings["env"]["CLAUDE_CODE_API_KEY_HELPER_TTL_MS"])
+    assert ttl_ms < 300_000
