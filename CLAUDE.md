@@ -219,27 +219,33 @@ skip-on-missing to fail-on-missing).
   `CLAUDE_ACCOUNT_NAMESPACES`). Seed a Claude account with `claude
   setup-token` signed in as it, then `envchain --set <ns>
   CLAUDE_CODE_OAUTH_TOKEN`.
-- Mid-session rotation rides Claude Code's `apiKeyHelper`:
-  `apps/claude-user/settings.json` points it at `claude-account
-  --helper`, re-invoked every 10s (`CLAUDE_CODE_API_KEY_HELPER_TTL_MS`)
-  and on any 401. The helper serves the best subscription token, falls
-  back to `envchain ai`'s `ANTHROPIC_API_KEY`, and on an account change
-  fires `glovebox login-sync` so live sandboxes converge. Denials are
-  event-driven, not polled: each beat keeps a `claude-account --watch`
-  process alive (no launchd — it self-exits when the helper heartbeat
-  goes stale) that tails `~/.claude/projects` transcripts and, on a
-  usage-limit error, probes the active account, records its cooldown,
-  and re-selects — denial→rotated token in ~2s detection + one probe +
-  ≤10s pickup. `CLAUDE_ACCOUNT_PROBE_INTERVAL` (default 300s, must
-  exceed the helper TTL) is only the backstop for denials the watcher
-  can't see (e.g. sandbox-internal transcripts). A failing helper
-  hard-fails sessions (no fall-through), so it must succeed whenever
-  any credential exists — doctor checks both the wiring and a dry run.
-  Because an exported key outranks the helper, the `claude` fish
-  function must NOT export `ANTHROPIC_API_KEY` (an export also makes
-  subscription sessions bill the API per-token). The helper printing
-  the token on stdout is the sanctioned exception to "secrets never on
-  argv": stdout is a pipe read only by the invoking claude.
+- Mid-session rotation is a loopback proxy, `bin/claude-rotate-proxy.py`.
+  Claude Code fixes how it presents a credential at launch from the slot
+  the token arrived in, so the `claude` fish function launches the client
+  holding only a sentinel `CLAUDE_CODE_OAUTH_TOKEN` (which fixes the
+  subscription presentation — Bearer + the `oauth-2025-04-20` beta) and
+  points `ANTHROPIC_BASE_URL` at the proxy. The proxy asks `claude-account
+  --pick` which namespace to serve, issues the upstream request as
+  `envchain <ns> curl` so the token never enters the proxy process, and on
+  a usage-limit 429 it reads straight off the response it calls
+  `claude-account --cooldown` and replays on the next account — denial to
+  rotated token in one request, no transcript grep and no poll. On an
+  account change `--pick` fires `glovebox login-sync` so live sandboxes
+  converge. Verified end to end: `tests/test_claude_account.py`'s proxy
+  test drives the real proxy + real curl against a fake Anthropic and a
+  stub envchain, and against the live API in
+  `agent-glovebox` PR #3133 the presentation was accepted (200). The
+  proxy binds 127.0.0.1 only, is a per-machine singleton (a second start
+  fails to bind), and self-exits when idle — nothing to install, nothing
+  for doctor/uninstall beyond the settings-drift and `--pick` checks.
+  `CLAUDE_ACCOUNT_PROBE_INTERVAL` (default 300s) is how long a healthy
+  `.ok` stamp is trusted before `--pick` re-probes. An exported
+  `ANTHROPIC_API_KEY` outranks the sentinel and breaks the proxy (it
+  presents as an API key with no oauth beta), so the `claude` fish
+  function must NOT export it and drops any inherited one with `env -u`.
+  The proxy's `envchain <ns> curl` is the sanctioned token path: the
+  credential expands only in the curl child, on no argv and in no file —
+  the same discipline `_probe` uses.
 - Secrets must never appear on argv. Pipe stdin → stdin between `bw`,
   `envchain`, and child commands. See `bin/bw-add-secret.bash` for the
   pattern.

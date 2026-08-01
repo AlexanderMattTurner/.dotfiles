@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # bin/lib/claude-account-lib.sh — the account-selection engine shared by
-# bin/claude-account.bash's launcher and apiKeyHelper modes.
+# bin/claude-account.bash's launcher mode and the rotation proxy's --pick.
 #
 # Each account is one envchain namespace holding a CLAUDE_CODE_OAUTH_TOKEN.
 # select_account walks the namespaces in preference order and echoes the first
@@ -65,12 +65,12 @@ _mtime() {
 }
 
 # True (0) while NAMESPACE's last healthy probe is younger than
-# CLAUDE_ACCOUNT_PROBE_INTERVAL seconds (default 300). The interval MUST
-# exceed the helper's re-invocation TTL or the stamp suppresses nothing and
-# every helper beat spends a live request. It is also the backstop time for a
-# helper to NOTICE the current account exhausted when the watcher misses the
-# denial, so it is the cost/latency dial: probing faster buys faster fallback
-# rotation, paid for in requests against the very usage limit being conserved.
+# CLAUDE_ACCOUNT_PROBE_INTERVAL seconds (default 300). The proxy calls --pick per
+# request, so without this stamp a healthy account would be re-probed on every
+# request; the interval is the cost/latency dial, probing faster to catch an
+# account newly exhausted sooner, paid for in requests against the usage limit
+# being conserved. The proxy does not depend on it for denial detection — it reads
+# the 429 straight off the response and cools the account down at once.
 _ok_fresh() {
     local mtime
     mtime="$(_mtime "$(_ok_file "$1")")"
@@ -148,7 +148,7 @@ _probe() {
           -H "content-type: application/json" \
           -H "anthropic-version: 2023-06-01" \
           -H "anthropic-beta: oauth-2025-04-20" \
-          -X POST https://api.anthropic.com/v1/messages --data "$1"
+          -X POST "${CLAUDE_ACCOUNT_PROBE_URL:-https://api.anthropic.com/v1/messages}" --data "$1"
     ' _ "$_PROBE_BODY" 2>/dev/null
     )" || raw=""
 

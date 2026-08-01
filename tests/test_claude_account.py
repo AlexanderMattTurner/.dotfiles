@@ -1,10 +1,13 @@
-"""Tests for bin/claude-account.bash — the per-launch Claude subscription picker.
+"""Tests for the Claude subscription rotation: bin/claude-account.bash and the
+loopback proxy bin/claude-rotate-proxy.py.
 
-It walks the envchain namespaces holding a CLAUDE_CODE_OAUTH_TOKEN, probes each
-against api.anthropic.com, and execs the caller's command under the first account
-that is not at its usage limit. These drive the real script with stub `envchain`
-and `curl` binaries on PATH, so the cooldown records and the exec'd environment
-are observed rather than asserted about.
+claude-account walks the envchain namespaces holding a CLAUDE_CODE_OAUTH_TOKEN,
+probes each against api.anthropic.com, and either execs the caller's command under
+the first usable account (launcher mode) or prints that namespace for the proxy
+(--pick). Most tests drive the real script with stub `envchain`/`curl` binaries on
+PATH and observe the cooldown records and exec'd environment. The final test drives
+the REAL proxy with a real curl against a fake Anthropic and a stub envchain, so the
+rotation is proven on the wire, not asserted.
 """
 
 import contextlib
@@ -97,10 +100,6 @@ def _run(
         "XDG_STATE_HOME": str(tmp_path / "state"),
         "CURL_LOG": str(tmp_path / "curl.log"),
         "GLOVEBOX_LOG": str(tmp_path / "glovebox.log"),
-        # A helper beat spawns the denial watcher; suppress it by default so
-        # every helper test doesn't leave a 10-minute background process in the
-        # tmp dir. Watcher tests opt back in (or run --watch directly).
-        "CLAUDE_ACCOUNT_NO_WATCH": "1",
         "NS": namespaces,
         "TOKS": " ".join(f"{k}={v}" for k, v in held.items()),
         "FX": " ".join(f"{k}={v}" for k, v in fx.items()),
@@ -370,11 +369,13 @@ def test_help_describes_the_command_without_touching_any_account(
     assert not _requests(tmp_path)
 
 
-# ── --helper mode (Claude Code apiKeyHelper) ────────────────────────────────
+# ── --pick and --cooldown (the rotation proxy's interface) ──────────────────
 #
-# stdout is handed to Claude Code verbatim as the session credential, so these
-# assert on r.stdout EXACTLY: any diagnostic leaking onto stdout corrupts the
-# credential of every running session.
+# bin/claude-rotate-proxy.py asks --pick which namespace to serve, and calls
+# --cooldown on a 429 it read off the response. --pick prints the NAMESPACE, never
+# a token: the proxy issues the upstream request as `envchain <ns> curl`, so the
+# token stays inside the envchain child. These assert on that namespace and on the
+# shared cooldown/stamp state both --pick and a launch read.
 
 _GLOVEBOX_STUB = r"""#!/bin/bash
 printf 'argv: %s token: %s\n' "$*" "${CLAUDE_CODE_OAUTH_TOKEN:-}" >>"${GLOVEBOX_LOG:?}"
@@ -382,7 +383,7 @@ printf 'argv: %s token: %s\n' "$*" "${CLAUDE_CODE_OAUTH_TOKEN:-}" >>"${GLOVEBOX_
 
 
 def _glovebox_calls(tmp_path: Path, expect: int) -> list[str]:
-    """Lines the glovebox stub logged; polls because --helper detaches the call."""
+    """Lines the glovebox stub logged; polls because the convergence is detached."""
     log = tmp_path / "glovebox.log"
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
@@ -393,68 +394,78 @@ def _glovebox_calls(tmp_path: Path, expect: int) -> list[str]:
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
-def test_helper_prints_exactly_the_chosen_token_and_nothing_else(
-    tmp_path: Path,
-) -> None:
-    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+def test_pick_prints_the_namespace_to_serve(tmp_path: Path) -> None:
+    r = _run(tmp_path, "--pick", fx={"one": "200|allowed|"})
     assert r.returncode == 0, r.stderr
-    assert r.stdout == TOKENS["one"]
+    assert r.stdout.strip() == "one"
 
 
-def test_helper_hands_the_session_the_next_account_when_the_first_exhausts(
-    tmp_path: Path,
-) -> None:
-    """The rotation itself: a helper beat that finds the current account at its
-    limit records the cooldown and serves the next account's token, which the
-    running session picks up on its next credential refresh."""
+def test_pick_rotates_past_an_exhausted_account(tmp_path: Path) -> None:
+    """The rotation the proxy relies on: an account at its limit is skipped and its
+    cooldown recorded, and --pick names the next usable one."""
     r = _run(
         tmp_path,
-        "--helper",
+        "--pick",
         fx={"one": f"429|rejected|{FAR_FUTURE}", "two": "200|allowed|"},
     )
     assert r.returncode == 0
-    assert r.stdout == TOKENS["two"]
-    assert (
-        _until_file(tmp_path, "one").read_text(encoding="utf-8").strip() == FAR_FUTURE
-    )
+    assert r.stdout.strip() == "two"
+    assert _until_file(tmp_path, "one").read_text(encoding="utf-8").strip() == FAR_FUTURE
 
 
-def test_a_cooldown_recorded_by_the_helper_is_honored_by_a_launch(
-    tmp_path: Path,
-) -> None:
-    """One shared state dir is what lets N sessions and launches rotate in
-    concert — a helper's verdict must not be re-derived by the next launch."""
-    _run(tmp_path, "--helper", fx={"one": f"429|rejected|{FAR_FUTURE}"})
-    r = _run(tmp_path, "env", fx={"two": "200|allowed|"})
-    assert r.returncode == 0
-    assert _exec_env(r)["CLAUDE_CODE_OAUTH_TOKEN"] == TOKENS["two"]
-    assert "one is at its usage limit" in r.stderr
-
-
-def test_a_fresh_healthy_verdict_is_trusted_without_a_new_probe(
-    tmp_path: Path,
-) -> None:
-    """The .ok stamp is what caps probe spend: at the 10s helper TTL, an
-    unstamped helper would bill one probe per beat per machine against the very
-    usage limit being conserved."""
-    _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
-    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
-    assert r.stdout == TOKENS["one"]
+def test_pick_trusts_a_fresh_stamp_without_a_probe(tmp_path: Path) -> None:
+    """The proxy calls --pick per request, so a healthy stamp is what stops a live
+    probe from being spent on every request."""
+    _run(tmp_path, "--pick", fx={"one": "200|allowed|"})
+    r = _run(tmp_path, "--pick", fx={"one": "200|allowed|"})
+    assert r.stdout.strip() == "one"
     assert len(_requests(tmp_path)) == 1
 
 
-def test_a_stale_healthy_verdict_is_re_probed(tmp_path: Path) -> None:
-    _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+def test_pick_reprobes_a_stale_stamp(tmp_path: Path) -> None:
+    _run(tmp_path, "--pick", fx={"one": "200|allowed|"})
     ok = tmp_path / "state" / "claude-accounts" / "one.ok"
     stale = time.time() - 400  # past the 300s default probe interval
     os.utime(ok, (stale, stale))
-    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
-    assert r.stdout == TOKENS["one"]
+    r = _run(tmp_path, "--pick", fx={"one": "200|allowed|"})
+    assert r.stdout.strip() == "one"
     assert len(_requests(tmp_path)) == 2
 
 
-def test_helper_keeps_the_token_off_every_argv(tmp_path: Path) -> None:
-    r = _run(tmp_path, "--helper", fx={"one": "200|allowed|"})
+def test_pick_fails_when_every_account_is_exhausted(tmp_path: Path) -> None:
+    """All accounts down is exit 1 with empty stdout — the proxy then returns 503
+    to the client rather than a namespace it cannot serve."""
+    r = _run(
+        tmp_path,
+        "--pick",
+        fx={"one": "429|rejected|", "two": "429|rejected|", "three": "401||"},
+    )
+    assert r.returncode == 1
+    assert r.stdout.strip() == ""
+
+
+def test_pick_never_names_a_namespace_whose_token_was_emptied(tmp_path: Path) -> None:
+    """A fresh stamp can outlive the keychain entry (or CLAUDE_ACCOUNT_NAMESPACES
+    lists one unverified); naming it would make the proxy send an empty Bearer.
+    --pick verifies the token, clears the stale stamp, and fails."""
+    state = tmp_path / "state" / "claude-accounts"
+    state.mkdir(parents=True)
+    (state / "one.ok").touch()
+    r = _run(
+        tmp_path,
+        "--pick",
+        fx={},
+        tokens={},
+        namespaces="one",
+        CLAUDE_ACCOUNT_NAMESPACES="one",
+    )
+    assert r.returncode == 1
+    assert r.stdout.strip() == ""
+    assert not (state / "one.ok").exists()
+
+
+def test_pick_keeps_the_token_off_every_argv(tmp_path: Path) -> None:
+    r = _run(tmp_path, "--pick", fx={"one": "200|allowed|"})
     assert r.returncode == 0
     log = (tmp_path / "curl.log").read_text(encoding="utf-8")
     argv_lines = [ln for ln in log.splitlines() if ln.startswith("argv: ")]
@@ -463,277 +474,81 @@ def test_helper_keeps_the_token_off_every_argv(tmp_path: Path) -> None:
         assert all(token not in ln for ln in argv_lines), argv_lines
 
 
-def test_helper_falls_back_to_the_api_key_when_no_subscription_exists(
-    tmp_path: Path,
-) -> None:
-    """A failing apiKeyHelper does not fall through to other credentials —
-    Claude Code hard-fails requests — so on a machine with no subscription
-    namespaces the helper must serve the pay-per-token key itself."""
-    r = _run(tmp_path, "--helper", fx={}, tokens={}, AI_KEY="sk-ant-api-test")
-    assert r.returncode == 0
-    assert r.stdout == "sk-ant-api-test"
-    assert not _requests(tmp_path)
-    # The helper fires every TTL, so a machine deliberately running
-    # pay-per-token only must not be nagged about seeding accounts each beat.
-    assert r.stderr == ""
-
-
-def test_helper_falls_back_to_the_api_key_when_every_account_is_exhausted(
-    tmp_path: Path,
-) -> None:
-    r = _run(
-        tmp_path,
-        "--helper",
-        fx={"one": "429|rejected|", "two": "429|rejected|", "three": "401||"},
-        AI_KEY="sk-ant-api-test",
-    )
-    assert r.returncode == 0
-    assert r.stdout == "sk-ant-api-test"
-    assert "pay-per-token" in r.stderr
-
-
-def test_helper_with_no_credential_at_all_fails_with_empty_stdout(
-    tmp_path: Path,
-) -> None:
-    r = _run(tmp_path, "--helper", fx={}, tokens={})
-    assert r.returncode == 1
-    assert r.stdout == ""
-    assert "bwseed" in r.stderr
-
-
-def test_an_account_change_converges_glovebox_once_not_per_beat(
-    tmp_path: Path,
-) -> None:
-    """Live glovebox sandboxes authenticate through a host-side proxy secret,
-    so a selection change must push the new account there ('glovebox
-    login-sync') — exactly once per change, or every beat would spawn sbx
-    store calls."""
+def test_pick_converges_glovebox_once_on_a_change(tmp_path: Path) -> None:
+    """A selection change pushes the new account to running glovebox sandboxes
+    ('glovebox login-sync'), exactly once per change."""
     _stub(tmp_path / "bin" / "glovebox", _GLOVEBOX_STUB)
     r = _run(
         tmp_path,
-        "--helper",
+        "--pick",
         fx={"one": f"429|rejected|{FAR_FUTURE}", "two": "200|allowed|"},
     )
-    assert r.stdout == TOKENS["two"]
+    assert r.stdout.strip() == "two"
     calls = _glovebox_calls(tmp_path, expect=1)
     assert len(calls) == 1
     assert "login-sync" in calls[0]
     assert TOKENS["two"] in calls[0]  # ran under the NEW account's envchain
-    # Same selection next beat: no new convergence call.
-    r = _run(tmp_path, "--helper", fx={"two": "200|allowed|"})
-    assert r.stdout == TOKENS["two"]
+    r = _run(tmp_path, "--pick", fx={"two": "200|allowed|"})
+    assert r.stdout.strip() == "two"
     time.sleep(0.3)
     assert len(_glovebox_calls(tmp_path, expect=1)) == 1
 
 
-def test_doctors_no_converge_knob_suppresses_the_glovebox_push(
-    tmp_path: Path,
-) -> None:
-    """doctor's helper self-test is read-only; without this knob it could
-    re-point live sandboxes a user pinned to another account on purpose."""
+def test_pick_no_converge_knob_suppresses_the_glovebox_push(tmp_path: Path) -> None:
+    """doctor's --pick self-test is read-only; the knob keeps it from re-pointing
+    live sandboxes a user pinned to another account on purpose."""
     _stub(tmp_path / "bin" / "glovebox", _GLOVEBOX_STUB)
     r = _run(
-        tmp_path,
-        "--helper",
-        fx={"one": "200|allowed|"},
-        CLAUDE_ACCOUNT_NO_CONVERGE="1",
+        tmp_path, "--pick", fx={"one": "200|allowed|"}, CLAUDE_ACCOUNT_NO_CONVERGE="1"
     )
-    assert r.stdout == TOKENS["one"]
+    assert r.stdout.strip() == "one"
     time.sleep(0.3)
     assert not (tmp_path / "glovebox.log").exists()
-    # The selection record is part of the convergence, not the health check.
     assert not (tmp_path / "state" / "claude-accounts" / "current").exists()
 
 
-def test_settings_wire_the_helper_with_a_ttl_shorter_than_the_probe_interval(
-    tmp_path: Path,
-) -> None:
-    """The settings symlinked to ~/.claude/settings.json must point at the
-    helper, and the re-invocation TTL must stay under the 300s probe interval
-    or the .ok stamp would never suppress a probe."""
-    settings = json.loads(
-        (DOTFILES / "apps" / "claude-user" / "settings.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert "claude-account --helper" in settings["apiKeyHelper"]
-    ttl_ms = int(settings["env"]["CLAUDE_CODE_API_KEY_HELPER_TTL_MS"])
-    assert ttl_ms < 300_000
+def test_cooldown_records_the_reset(tmp_path: Path) -> None:
+    r = _run(tmp_path, "--cooldown", "one", FAR_FUTURE, fx={})
+    assert r.returncode == 0
+    assert _until_file(tmp_path, "one").read_text(encoding="utf-8").strip() == FAR_FUTURE
 
 
-# ── --watch mode (the denial watcher) ───────────────────────────────────────
-#
-# The watcher is what makes rotation take seconds instead of a probe interval:
-# it tails the session transcripts, and a usage-limit API error triggers an
-# immediate probe-and-reselect. These drive the real `--watch` loop as a
-# subprocess with a fast poll and observe the shared state it writes.
-
-DENIAL_LINE = (
-    '{"type":"assistant","isApiErrorMessage":true,'
-    '"message":"Claude usage limit reached · resets 3:45pm"}\n'
-)
+def test_cooldown_backs_off_an_hour_for_a_past_reset(tmp_path: Path) -> None:
+    """A reset in the past cannot cool the account down; --cooldown falls back to an
+    hour so the next --pick does not re-probe straight into the same 429."""
+    before = int(time.time())
+    r = _run(tmp_path, "--cooldown", "one", "1", fx={})
+    assert r.returncode == 0
+    recorded = int(_until_file(tmp_path, "one").read_text(encoding="utf-8").strip())
+    assert before + 3500 <= recorded <= before + 3700
 
 
-def _start_watcher(
-    tmp_path: Path,
-    fx: dict[str, str],
-    tokens: dict[str, str] | None = None,
-    **extra: str,
-) -> subprocess.Popen[str]:
-    bin_dir = tmp_path / "bin"
-    _stub(bin_dir / "envchain", _ENVCHAIN_STUB)
-    _stub(bin_dir / "curl", _CURL_STUB)
-    held = TOKENS if tokens is None else tokens
-    transcripts = tmp_path / "home" / ".claude" / "projects" / "p"
-    transcripts.mkdir(parents=True, exist_ok=True)
-    env = {
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "HOME": str(tmp_path / "home"),
-        "XDG_STATE_HOME": str(tmp_path / "state"),
-        "CURL_LOG": str(tmp_path / "curl.log"),
-        "GLOVEBOX_LOG": str(tmp_path / "glovebox.log"),
-        "NS": "one two three",
-        "TOKS": " ".join(f"{k}={v}" for k, v in held.items()),
-        "FX": " ".join(f"{k}={v}" for k, v in fx.items()),
-        "CLAUDE_ACCOUNT_WATCH_POLL": "0.1",
-        **extra,
-    }
-    return subprocess.Popen(
-        ["bash", str(SCRIPT), "--watch"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-
-
-def _transcript(tmp_path: Path) -> Path:
-    return tmp_path / "home" / ".claude" / "projects" / "p" / "session.jsonl"
-
-
-def _wait_for(predicate, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.05)
-    return False
-
-
-def _stop(proc: subprocess.Popen[str]) -> None:
-    proc.terminate()
-    try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-
-
-def test_watcher_rotates_within_seconds_of_a_transcript_denial(
-    tmp_path: Path,
-) -> None:
-    """End-to-end fast path: denial line lands in a transcript → the watcher
-    probes the active account, records its cooldown, and converges glovebox on
-    the next one — all without waiting out the probe interval."""
-    _stub(tmp_path / "bin" / "glovebox", _GLOVEBOX_STUB)
-    # 'one' is the active account (fresh .ok + current record, as a helper beat
-    # would leave them); its next probe reports the limit.
+def test_cooldown_clears_a_healthy_stamp(tmp_path: Path) -> None:
     state = tmp_path / "state" / "claude-accounts"
     state.mkdir(parents=True)
     (state / "one.ok").touch()
-    (state / "current").write_text("one\n", encoding="utf-8")
-    proc = _start_watcher(
-        tmp_path,
-        fx={"one": f"429|rejected|{FAR_FUTURE}", "two": "200|allowed|"},
-    )
-    try:
-        time.sleep(0.3)  # let the first scan pass so the append is "new"
-        _transcript(tmp_path).write_text(DENIAL_LINE, encoding="utf-8")
-        assert _wait_for(lambda: _until_file(tmp_path, "one").exists())
-        assert (
-            _until_file(tmp_path, "one").read_text(encoding="utf-8").strip()
-            == FAR_FUTURE
-        )
-        assert _wait_for(lambda: (tmp_path / "glovebox.log").exists())
-        calls = (tmp_path / "glovebox.log").read_text(encoding="utf-8").splitlines()
-        assert any("login-sync" in c and TOKENS["two"] in c for c in calls)
-        assert (state / "current").read_text(encoding="utf-8").strip() == "two"
-    finally:
-        _stop(proc)
+    _run(tmp_path, "--cooldown", "one", FAR_FUTURE, fx={})
+    assert not (state / "one.ok").exists()
 
 
-def test_watcher_ignores_lines_that_are_not_usage_denials(tmp_path: Path) -> None:
-    """The transcript grep is trigger-only, so ordinary lines — even ones
-    mentioning errors — must not spend probes."""
-    proc = _start_watcher(tmp_path, fx={"one": "200|allowed|"})
-    try:
-        time.sleep(0.3)
-        _transcript(tmp_path).write_text(
-            '{"type":"assistant","message":"discussing rate limits in prose"}\n'
-            '{"type":"assistant","isApiErrorMessage":true,"message":"overloaded"}\n',
-            encoding="utf-8",
-        )
-        time.sleep(1.0)
-        assert not _requests(tmp_path)
-    finally:
-        _stop(proc)
-
-
-def test_watcher_self_exits_when_no_helper_heartbeat_remains(tmp_path: Path) -> None:
-    """The watcher must live exactly as long as sessions do — a stale
-    heartbeat means every session is gone, and lingering would leave a
-    process nothing owns."""
-    state = tmp_path / "state" / "claude-accounts"
-    state.mkdir(parents=True)
-    hb = state / "watcher.heartbeat"
-    hb.touch()
-    stale = time.time() - 100
-    os.utime(hb, (stale, stale))
-    proc = _start_watcher(tmp_path, fx={}, CLAUDE_ACCOUNT_WATCH_IDLE_EXIT="1")
-    try:
-        assert _wait_for(lambda: proc.poll() is not None), "watcher did not exit"
-        assert not (state / "watcher.pid").exists()
-    finally:
-        _stop(proc)
-
-
-def test_helper_respawns_a_dead_watcher_and_feeds_the_heartbeat(
-    tmp_path: Path,
-) -> None:
-    state = tmp_path / "state" / "claude-accounts"
-    state.mkdir(parents=True)
-    (state / "watcher.pid").write_text("999999999\n", encoding="utf-8")
-    r = _run(
-        tmp_path,
-        "--helper",
-        fx={"one": "200|allowed|"},
-        CLAUDE_ACCOUNT_NO_WATCH="",
-        CLAUDE_ACCOUNT_WATCH_POLL="0.1",
-    )
+def test_a_proxy_cooldown_is_honored_by_a_later_launch(tmp_path: Path) -> None:
+    """One shared state dir lets the proxy and a launch rotate in concert — a
+    cooldown the proxy recorded must not be re-derived by the next launch."""
+    _run(tmp_path, "--cooldown", "one", FAR_FUTURE, fx={})
+    r = _run(tmp_path, "env", fx={"two": "200|allowed|"})
     assert r.returncode == 0
-    assert r.stdout == TOKENS["one"]
-    assert (state / "watcher.heartbeat").exists()
-
-    def _live_watcher() -> bool:
-        pid = (state / "watcher.pid").read_text(encoding="utf-8").strip()
-        if pid == "999999999" or not pid.isdigit():
-            return False
-        try:
-            os.kill(int(pid), 0)
-        except OSError:
-            return False
-        return True
-
-    try:
-        assert _wait_for(_live_watcher), "helper did not respawn the watcher"
-    finally:
-        pid = int((state / "watcher.pid").read_text(encoding="utf-8"))
-        with contextlib.suppress(OSError):
-            os.kill(pid, 15)
+    assert _exec_env(r)["CLAUDE_CODE_OAUTH_TOKEN"] == TOKENS["two"]
+    assert "one is at its usage limit" in r.stderr
 
 
-def test_a_launch_probes_even_when_the_helper_stamp_is_fresh(tmp_path: Path) -> None:
-    """Launcher mode never trusts the stamp — a fresh launch is supposed to
-    spend one real probe rather than inherit a helper verdict."""
+def test_cooldown_requires_a_namespace(tmp_path: Path) -> None:
+    r = _run(tmp_path, "--cooldown", fx={})
+    assert r.returncode == 2
+
+
+def test_a_launch_probes_even_when_a_stamp_is_fresh(tmp_path: Path) -> None:
+    """Launcher mode never trusts the stamp — a fresh launch spends one real probe
+    rather than inherit a --pick verdict."""
     state = tmp_path / "state" / "claude-accounts"
     state.mkdir(parents=True)
     (state / "one.ok").touch()
@@ -742,66 +557,152 @@ def test_a_launch_probes_even_when_the_helper_stamp_is_fresh(tmp_path: Path) -> 
     assert len(_requests(tmp_path)) == 1
 
 
-def test_helper_never_serves_an_empty_token(tmp_path: Path) -> None:
-    """A fresh healthy stamp can outlive the keychain entry (or an explicit
-    CLAUDE_ACCOUNT_NAMESPACES lists a namespace unverified); serving "" with
-    exit 0 would hand every running session an empty credential. The helper
-    must verify the winner holds a token and fall back."""
-    state = tmp_path / "state" / "claude-accounts"
-    state.mkdir(parents=True)
-    (state / "one.ok").touch()
-    r = _run(
-        tmp_path,
-        "--helper",
-        fx={},
-        tokens={},
-        namespaces="one",
-        CLAUDE_ACCOUNT_NAMESPACES="one",
-        AI_KEY="sk-ant-api-test",
+def test_settings_no_longer_wire_an_apikeyhelper(tmp_path: Path) -> None:
+    """Mid-session rotation is the loopback proxy now; a lingering apiKeyHelper
+    would point at a --helper mode that no longer exists and break every session."""
+    settings = json.loads(
+        (DOTFILES / "apps" / "claude-user" / "settings.json").read_text(
+            encoding="utf-8"
+        )
     )
-    assert r.returncode == 0
-    assert r.stdout == "sk-ant-api-test"
-    assert "no longer holds" in r.stderr
+    assert "apiKeyHelper" not in settings
+    assert "CLAUDE_CODE_API_KEY_HELPER_TTL_MS" not in settings.get("env", {})
 
 
-def test_the_exhaustion_notice_prints_once_not_every_beat(tmp_path: Path) -> None:
-    """The helper fires every TTL; diagnostics are latched to serve-identity
-    changes so the all-exhausted state nags once, not every 10 seconds."""
-    fx = {"one": f"429|rejected|{FAR_FUTURE}"}
-    first = _run(tmp_path, "--helper", fx=fx, AI_KEY="sk-ant-api-test")
-    assert first.stdout == "sk-ant-api-test"
-    assert "every subscription account is exhausted" in first.stderr
-    second = _run(tmp_path, "--helper", fx=fx, AI_KEY="sk-ant-api-test")
-    assert second.stdout == "sk-ant-api-test"
-    assert second.stderr == ""
+# ── end-to-end: the real rotation proxy against a fake Anthropic ────────────
+#
+# Drives bin/claude-rotate-proxy.py as a real process with a real curl and a real
+# bash child, faking only the far side (Anthropic) and the credential store
+# (envchain — there is no real keychain in CI). A POST the fake rejects for the
+# first account must come back 200 after the proxy rotates to the next one, with
+# the first account recorded on cooldown: the whole rotation proven, not asserted.
+
+PROXY = DOTFILES / "bin" / "claude-rotate-proxy.py"
 
 
-def test_a_recycled_pid_in_the_pidfile_does_not_suppress_the_watcher(
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_port(port: int, timeout: float = 5.0) -> bool:
+    import socket
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with socket.socket() as s:
+            s.settimeout(0.2)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+        time.sleep(0.05)
+    return False
+
+
+def _fake_anthropic(port: int, seen: list[str]):
+    """A fake api.anthropic.com: 429-rejected for tok-one, 200 for tok-two, keyed on
+    the Bearer token the proxy's curl child actually sent. Records each token seen."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a: object) -> None:
+            pass
+
+        def do_POST(self) -> None:
+            n = int(self.headers.get("content-length", 0))
+            self.rfile.read(n)
+            auth = self.headers.get("authorization", "")
+            token = auth.removeprefix("Bearer ").strip()
+            seen.append(token)
+            if token == "tok-two":
+                body = b'{"ok":"served-by-two"}'
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = b'{"type":"error","error":{"type":"rate_limit_error"}}'
+            self.send_response(429)
+            self.send_header("anthropic-ratelimit-unified-status", "rejected")
+            self.send_header("anthropic-ratelimit-unified-reset", FAR_FUTURE)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), H)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def test_the_proxy_rotates_a_live_request_past_an_exhausted_account(
     tmp_path: Path,
 ) -> None:
-    """kill -0 alone would trust any live process; after a reboot the recorded
-    pid can belong to something unrelated (pid 1 here), which must read as
-    'no watcher' so one is respawned."""
+    fake_port = _free_port()
+    proxy_port = _free_port()
+    seen: list[str] = []
+    server = _fake_anthropic(fake_port, seen)
+
+    bin_dir = tmp_path / "bin"
+    _stub(bin_dir / "envchain", _ENVCHAIN_STUB)  # real curl, real bash; only the store is faked
     state = tmp_path / "state" / "claude-accounts"
     state.mkdir(parents=True)
-    (state / "watcher.pid").write_text("1\n", encoding="utf-8")
-    r = _run(
-        tmp_path,
-        "--helper",
-        fx={"one": "200|allowed|"},
-        CLAUDE_ACCOUNT_NO_WATCH="",
-        CLAUDE_ACCOUNT_WATCH_POLL="0.1",
-        CLAUDE_ACCOUNT_WATCH_IDLE_EXIT="600",
+    # Fresh stamps in preference order 'one' then 'two', so --pick serves 'one'
+    # first without a probe; the proxy's 429 on 'one' drives the rotation to 'two'.
+    (state / "one.ok").touch()
+    (state / "two.ok").touch()
+
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "HOME": str(tmp_path / "home"),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+        "NS": "one two",
+        "TOKS": "one=tok-one two=tok-two",
+        "CLAUDE_ACCOUNT_NAMESPACES": "one two",
+        "CLAUDE_ACCOUNT_PROBE_URL": f"http://127.0.0.1:{fake_port}/v1/messages",
+        "CLAUDE_ROTATE_PROXY_PORT": str(proxy_port),
+        "CLAUDE_ROTATE_PROXY_UPSTREAM": f"http://127.0.0.1:{fake_port}",
+        "CLAUDE_ROTATE_PROXY_ACCOUNT_CLI": str(SCRIPT),
+    }
+    proxy = subprocess.Popen(
+        ["python3", str(PROXY)],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    assert r.returncode == 0
-
-    def _real_watcher() -> bool:
-        pid = (state / "watcher.pid").read_text(encoding="utf-8").strip()
-        return pid.isdigit() and pid != "1"
-
     try:
-        assert _wait_for(_real_watcher), "helper trusted the recycled pid"
+        assert _wait_port(proxy_port), "proxy never started listening"
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{proxy_port}/v1/messages",
+            data=b'{"model":"claude-haiku-4-5","messages":[]}',
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            status = resp.status
+            payload = resp.read()
+
+        assert status == 200, payload
+        assert b"served-by-two" in payload
+        # The rotation happened on the wire: the fake saw the exhausted account
+        # first, then the account the proxy rotated to.
+        assert seen == ["tok-one", "tok-two"], seen
+        # And the exhausted account was recorded on cooldown for the next request.
+        assert _until_file(tmp_path, "one").exists()
+        assert (
+            int(_until_file(tmp_path, "one").read_text(encoding="utf-8").strip())
+            >= int(time.time())
+        )
     finally:
-        pid = int((state / "watcher.pid").read_text(encoding="utf-8"))
-        with contextlib.suppress(OSError):
-            os.kill(pid, 15)
+        proxy.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proxy.wait(timeout=3)
+        if proxy.poll() is None:
+            proxy.kill()
+        server.shutdown()

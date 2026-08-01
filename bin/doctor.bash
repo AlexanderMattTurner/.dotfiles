@@ -290,30 +290,37 @@ else
     skip "envchain" "not installed"
 fi
 
-# A failing apiKeyHelper does NOT fall through to other credentials — Claude
-# Code hard-fails requests after three helper failures — so drift in the
-# settings wiring or a helper with nothing to serve breaks every claude
-# session. Check both here, where the fix is nameable.
+# Mid-session rotation is the loopback proxy (bin/claude-rotate-proxy.py) the claude
+# fish wrapper points ANTHROPIC_BASE_URL at. The old apiKeyHelper wiring is gone; a
+# settings.json that still carries it points at a --helper mode that no longer
+# exists and would break every session, so flag that drift.
 claude_settings="$HOME/.claude/settings.json"
 if ! command -v jq >/dev/null 2>&1; then
-    skip "apiKeyHelper wiring" "jq not installed"
+    skip "rotation settings" "jq not installed"
 elif [[ ! -f "$claude_settings" ]]; then
-    skip "apiKeyHelper wiring" "\$HOME/.claude/settings.json missing (run setup.bash)"
-elif jq -re '.apiKeyHelper // ""' "$claude_settings" 2>/dev/null | grep -q 'claude-account --helper'; then
-    pass "apiKeyHelper points at claude-account --helper"
+    skip "rotation settings" "\$HOME/.claude/settings.json missing (run setup.bash)"
+elif [[ -n "$(jq -re '.apiKeyHelper // ""' "$claude_settings" 2>/dev/null)" ]]; then
+    fail "rotation settings" "settings.json still sets apiKeyHelper — mid-session rotation is now the loopback proxy; re-run setup.bash to refresh the symlink"
 else
-    fail "apiKeyHelper wiring" "\$HOME/.claude/settings.json lacks apiKeyHelper -> 'claude-account --helper' (settings drift)"
+    pass "settings.json has no stale apiKeyHelper"
 fi
 
-if ! command -v envchain >/dev/null 2>&1; then
-    skip "claude-account helper" "envchain not installed"
-    # The two knobs keep the dry run trace-free: no glovebox convergence, no
-    # `current` record, no spawned watcher. It may still spend a probe and
-    # refresh the shared verdict cache — the same read any helper beat does.
-elif CLAUDE_ACCOUNT_NO_CONVERGE=1 CLAUDE_ACCOUNT_NO_WATCH=1 "$DOTFILES_DIR/bin/claude-account.bash" --helper >/dev/null 2>&1; then
-    pass "claude-account --helper serves a credential"
+# The rotation proxy and the selection engine it drives. The dry run gates
+# CLAUDE_ACCOUNT_NO_CONVERGE so a health check never re-points live sandboxes; it
+# may still spend the cache-gated probe any --pick does.
+proxy="$DOTFILES_DIR/bin/claude-rotate-proxy.py"
+if ! command -v python3 >/dev/null 2>&1; then
+    skip "rotation proxy" "python3 not installed"
+elif ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$proxy" 2>/dev/null; then
+    fail "rotation proxy" "$proxy does not parse"
+elif ! command -v envchain >/dev/null 2>&1; then
+    skip "rotation proxy" "envchain not installed"
+elif [[ -z "$("$DOTFILES_DIR/bin/claude-account.bash" --namespaces 2>/dev/null)" ]]; then
+    skip "rotation proxy" "no subscription account seeded (claude setup-token; envchain --set <ns> CLAUDE_CODE_OAUTH_TOKEN)"
+elif CLAUDE_ACCOUNT_NO_CONVERGE=1 "$DOTFILES_DIR/bin/claude-account.bash" --pick >/dev/null 2>&1; then
+    pass "rotation proxy + claude-account --pick serve an account"
 else
-    fail "claude-account helper" "no usable credential — seed a subscription namespace (claude setup-token; envchain --set <ns> CLAUDE_CODE_OAUTH_TOKEN) or envchain ai ANTHROPIC_API_KEY (bwseed)"
+    skip "rotation proxy" "every seeded account is at its usage limit right now (transient)"
 fi
 
 # ── Brewfile ────────────────────────────────────────────────────────────────
