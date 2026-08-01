@@ -211,6 +211,14 @@ skip-on-missing to fail-on-missing).
 - Bitwarden vault is the cross-machine source of truth; envchain is the
   per-machine runtime cache (auto-unlocked via macOS Keychain at GUI
   login). Don't add a third secrets layer.
+- Namespaces consumed by wrappers, so you know what to seed: `ai`
+  (`VENICE_INFERENCE_KEY`, `ANTHROPIC_API_KEY`), `npm`, `cloudflare`,
+  `pypi`, and one per Claude subscription for `bin/claude-account.bash`
+  (any name; it scans every namespace holding a
+  `CLAUDE_CODE_OAUTH_TOKEN`, or the ordered list in
+  `CLAUDE_ACCOUNT_NAMESPACES`). Seed a Claude account with `claude
+  setup-token` signed in as it, then `envchain --set <ns>
+  CLAUDE_CODE_OAUTH_TOKEN`.
 - Secrets must never appear on argv. Pipe stdin → stdin between `bw`,
   `envchain`, and child commands. See `bin/bw-add-secret.bash` for the
   pattern.
