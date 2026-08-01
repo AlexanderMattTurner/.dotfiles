@@ -234,6 +234,11 @@ fish_add_path ~/bin ~/.local/bin /usr/local/go/bin
 set -gx EDITOR nvim
 set -gx SHELL (status fish-path)
 
+# less draws on the alternate screen, where tmux forwards the wheel to the app
+# rather than opening copy-mode. Without --mouse, less requests no mouse
+# tracking and the event is dropped, so the pane looks unscrollable.
+set -gx LESS '-R --mouse --wheel-lines=3'
+
 abbr -a n nvim
 
 # Trash-cli aliases 

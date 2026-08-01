@@ -6,6 +6,7 @@
 #   dotfiles uninstall [--yes]            # remove $HOME symlinks (restores backups)
 #   dotfiles link                         # refresh symlinks only (runs setup.bash --link-only)
 #   dotfiles lint [--ci] [--fix]          # run all linters
+#   dotfiles tmux-gc [--dry-run]          # reap idle, empty tmux sessions
 #
 # Wraps the underlying scripts in bin/ and setup.bash so users get a single
 # entry point with fish-completable subcommands. All extra args are passed
@@ -35,6 +36,7 @@ subcommands:
   link       refresh symlinks only (setup.bash --link-only)
   setup      run the full installer (setup.bash)
   lint       run pre-commit hooks (bin/lint.bash → pre-commit run --all-files)
+  tmux-gc    reap idle, empty tmux sessions (bin/tmux-gc.bash)
   help       show this message (alias: -h, --help)
 
 Extra args are forwarded to the underlying script.
@@ -69,6 +71,10 @@ setup)
 lint)
     shift
     exec bash "$DOTFILES_DIR/bin/lint.bash" "$@"
+    ;;
+tmux-gc)
+    shift
+    exec bash "$DOTFILES_DIR/bin/tmux-gc.bash" "$@"
     ;;
 *)
     printf "dotfiles: unknown subcommand %q\n\n" "$1" >&2

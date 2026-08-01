@@ -319,6 +319,21 @@ else
     fail "TPM" "$TPM_DIR is not a git checkout (run setup.bash)"
 fi
 
+# The session reaper that keeps @continuum-restore from resurrecting empty
+# shells forever. Both halves must hold: an executable script, and the hooks
+# in .tmux.conf that actually run it.
+if [[ -x "$DOTFILES_DIR/bin/tmux-gc.bash" ]]; then
+    pass "tmux-gc script executable"
+else
+    fail "tmux-gc" "$DOTFILES_DIR/bin/tmux-gc.bash is missing or not executable"
+fi
+
+if grep -q 'tmux-gc' "$DOTFILES_DIR/.tmux.conf" 2>/dev/null; then
+    pass "tmux-gc hooked into .tmux.conf"
+else
+    fail "tmux-gc hook" "no client-attached hook in .tmux.conf; idle sessions will accumulate"
+fi
+
 # ── cron jobs ───────────────────────────────────────────────────────────────
 section "cron"
 
