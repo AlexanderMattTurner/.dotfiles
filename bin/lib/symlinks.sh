@@ -33,6 +33,7 @@ $HOME/.ssh/config|$DOTFILES_DIR/apps/ssh/config|ssh config
 $HOME/.config/mise/config.toml|$DOTFILES_DIR/apps/mise/config.toml|mise config
 $HOME/.config/nvim|$DOTFILES_DIR/apps/nvim|nvim config
 $HOME/.local/bin/bw-node|$DOTFILES_DIR/bin/bw-node|bw-node wrapper
+$HOME/.local/bin/claude-account|$DOTFILES_DIR/bin/claude-account.bash|claude-account launcher
 $HOME/.claude/settings.json|$DOTFILES_DIR/apps/claude-user/settings.json|Claude Code settings
 $HOME/.claude/CLAUDE.md|$DOTFILES_DIR/claude-guard/user-config/CLAUDE.md|Claude Code global CLAUDE.md
 $HOME/.claude/commands|$DOTFILES_DIR/claude-guard/user-config/skills|Claude Code slash-command dir
@@ -41,7 +42,6 @@ EOF
     if [[ "$(uname)" == "Darwin" ]]; then
         cat <<EOF
 $HOME/.aerospace.toml|$DOTFILES_DIR/.aerospace.toml|.aerospace.toml
-$HOME/Library/com.googlecode.iterm2.plist|$DOTFILES_DIR/apps/com.googlecode.iterm2.plist|iTerm2 plist
 $HOME/.config/swiftbar/vpn.10s.bash|$DOTFILES_DIR/apps/swiftbar/vpn.10s.bash|swiftbar vpn plugin
 $HOME/Library/Application Support/VSCodium/User/settings.json|$DOTFILES_DIR/apps/vscodium/settings.json|VSCodium settings (macOS)
 $HOME/Library/Application Support/VSCodium/User/keybindings.json|$DOTFILES_DIR/apps/vscodium/keybindings.json|VSCodium keybindings (macOS)

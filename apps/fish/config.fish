@@ -28,14 +28,15 @@ end
 # First iTerm2 window after reboot: no server -> start one, attach to `main`
 # (continuum-restore fires here). Subsequent windows: server is up, so spawn a
 # fresh independent session per window for parallel layouts.
+#
 # Escape hatch: set NO_AUTO_TMUX (any value) to skip the exec — editor-embedded
 # terminals, one-off interactive shells, and remote sessions don't want it.
 # One shell:  NO_AUTO_TMUX=1 fish     Permanently:  set -Ux NO_AUTO_TMUX 1
 if status is-interactive; and not set -q TMUX; and not set -q NO_AUTO_TMUX; and command -q tmux
     if tmux has-session 2>/dev/null
-        exec tmux new-session
+        tmux new-session
     else
-        exec tmux new-session -A -s main
+        tmux new-session -A -s main
     end
 end
 
@@ -432,6 +433,3 @@ function brew --wraps brew --description 'Guard against starting homebrew tailsc
 end
 
 fish_add_path $HOME/go/bin
-
-# claude-guard: ~/.local/bin on PATH
-fish_add_path --move "$HOME/.local/bin"

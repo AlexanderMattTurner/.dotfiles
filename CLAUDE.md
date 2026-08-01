@@ -68,7 +68,7 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
 - `.mcp.json` — Claude Code MCP server config; currently registers the
   filesystem MCP scoped to `~/.dotfiles`.
 - `.claude/` — mostly symlinks into `claude-guard/`:
-  `settings.json`, `hooks/`, `README.md`. `.claude/skills/` is a real
+  `hooks/`, `README.md`. `.claude/skills/` is a real
   tracked directory populated by `template-sync` from the upstream template;
   any private skills from `claude-guard/skills/` must be
   individually symlinked in by `setup.bash` if needed.
@@ -76,7 +76,10 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
 - `launchagents/`, `etc/sudoers.d/` — `__USERNAME__` templates rendered
   during install.
 - `.github/workflows/lint.yml` — shellcheck + shfmt + stylua + yamllint
-  + ruff + gitleaks. Auto-fixes and pushes a `style:` commit.
+  + actionlint + ruff + gitleaks. Auto-fixes and pushes a `style:` commit.
+  (`actionlint` is GitHub-Actions-aware where yamllint is generic YAML — it
+  catches `if:` expression-type bugs, unknown action inputs, and shell
+  issues in `run:` blocks; built from a pinned rev via `language: golang`.)
 - `.github/workflows/idempotency.yml` — runs `setup.bash --link-only` twice
   on both `ubuntu-latest` and `macos-latest`, asserts identical symlink
   set + clean doctor output. The macOS leg covers the `if [ "$(uname)"
@@ -208,6 +211,14 @@ skip-on-missing to fail-on-missing).
 - Bitwarden vault is the cross-machine source of truth; envchain is the
   per-machine runtime cache (auto-unlocked via macOS Keychain at GUI
   login). Don't add a third secrets layer.
+- Namespaces consumed by wrappers, so you know what to seed: `ai`
+  (`VENICE_INFERENCE_KEY`, `ANTHROPIC_API_KEY`), `npm`, `cloudflare`,
+  `pypi`, and one per Claude subscription for `bin/claude-account.bash`
+  (any name; it scans every namespace holding a
+  `CLAUDE_CODE_OAUTH_TOKEN`, or the ordered list in
+  `CLAUDE_ACCOUNT_NAMESPACES`). Seed a Claude account with `claude
+  setup-token` signed in as it, then `envchain --set <ns>
+  CLAUDE_CODE_OAUTH_TOKEN`.
 - Secrets must never appear on argv. Pipe stdin → stdin between `bw`,
   `envchain`, and child commands. See `bin/bw-add-secret.bash` for the
   pattern.
@@ -271,16 +282,21 @@ Code's permission prompts (no `--dangerously-skip-permissions`).
   runtime from envchain's environment, never expanded by fish or placed
   on argv. `bin/setup_llm.bash` writes llm's `extra-openai-models.yaml`
   (default `venice-sonnet`).
-- `apps/mods/mods.yml` lists Venice models only (qwen-2.5-coder,
-  llama-3.3, mistral, etc.). The `mods` fish function wraps invocations
-  in `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the
-  Keychain.
+- `apps/mods/mods.yml` routes through Venice only (default
+  `qwen3-coder-480b-a35b-instruct-turbo`, plus `claude-sonnet-4-6`,
+  `claude-opus-4-7`, `deepseek-v4-pro`, `mistral-small-2603` — model ids
+  match Venice's `/v1/models` and rotate, so treat these as examples, not
+  a frozen list). The `mods` fish function wraps invocations in
+  `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the Keychain.
 
 ### Cross-platform
 
-- `IS_MAC=$([[ "$(uname)" == "Darwin" ]] && echo true || echo false)` is
-  the canonical detector. Linux is everything else; we don't separately
-  branch for distros, and we don't support WSL.
+- `IS_MAC=false; [[ "$(uname)" == "Darwin" ]] && IS_MAC=true` is the
+  canonical detector (see `bin/doctor.bash`, `bin/uninstall.bash`,
+  `bin/setup_llm.bash`). `setup.bash` is the exception — it never defines
+  `IS_MAC` and inlines `[ "$(uname)" = "Darwin" ]` checks directly. Linux
+  is everything else; we don't separately branch for distros, and we
+  don't support WSL.
 - Cask entries belong inside the `if OS.mac?` block in `Brewfile`. Brews
   that exist on both platforms go above it.
 - macOS-only paths in `setup.bash` (launchd agents, defaults writes,
@@ -421,7 +437,7 @@ should still land upstream in
 `alexander-turner/claude-automation-template` rather than accumulating
 local drift that invites conflict PRs.
 
-This repo symlinks `.claude/{README.md,settings.json,hooks}` into the
+This repo symlinks `.claude/{README.md,hooks}` into the
 gitignored `claude-guard/` — never cloned in CI, so the links dangle —
 and `.hooks/{pre-push,prepare-commit-msg}` into `bin/`, where a naive
 sync `cp` would write *through* the live link and corrupt the target.
@@ -437,7 +453,8 @@ bullet):
 - The dry-run input fix: `inputs.dry-run` is a boolean, so step
   conditions must compare `== true` / `!= true` — comparing to the
   string `'true'` never matches, which made "dry run" dispatches open
-  real PRs.
+  real PRs. (The `actionlint` pre-commit hook now flags this class of
+  expression-type mismatch.)
 - The `sh-extension` pre-commit hook's `exclude` pattern additionally
   skips `.github/scripts/` and `.hooks/lint-skills.sh`: both are
   populated verbatim by `template-sync` from files the template itself

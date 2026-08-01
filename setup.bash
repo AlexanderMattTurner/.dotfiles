@@ -53,7 +53,12 @@ source "$DOTFILES_DIR/bin/lib/retry.sh"
 # Clones/updates at the commit pinned in claude-guard.ref — the subrepo
 # carries the AI-safety monitor, so it doesn't float at origin/main.
 # Bump with: bash bin/clone-claude-guard.bash --bump
-bash "$DOTFILES_DIR/bin/clone-claude-guard.bash"
+# Non-fatal: a fresh machine with a flaky network shouldn't be unable to
+# reach the closing doctor.bash summary. doctor.bash's claude-guard check
+# reports the state below (skips if never cloned, fails if drifted from the
+# pin) with the exact remediation command.
+bash "$DOTFILES_DIR/bin/clone-claude-guard.bash" ||
+    status_msg "WARN: claude-guard clone/update failed; rerun 'bash bin/clone-claude-guard.bash' — doctor.bash reports its state below."
 
 # ── Symlinks (always run) ────────────────────────────────────────────────────
 status_msg "Linking dotfiles..."
@@ -159,7 +164,8 @@ fi
 
 # GitHub CLI — install and authenticate on first login
 if ! command_exists gh; then
-    brew_quiet_install gh
+    retry 3 5 brew_quiet_install gh ||
+        status_msg "WARN: 'brew install gh' failed after 3 attempts — doctor.bash will report it missing."
 fi
 if ! gh auth status &>/dev/null; then
     if bash "$DOTFILES_DIR/bin/gh-auth-from-bw.bash" 2>/dev/null; then
@@ -183,7 +189,8 @@ if [ "$(uname)" = "Darwin" ]; then
     ESCAPED_USER="$(printf '%s' "$USER" | sed 's/[\/&]/\\&/g')"
 
     # Aerospace window manager setup (requires custom tap)
-    brew_quiet_install --cask nikitabobko/tap/aerospace
+    retry 3 5 brew_quiet_install --cask nikitabobko/tap/aerospace ||
+        status_msg "WARN: aerospace cask install failed after 3 attempts — rerun setup.bash to retry."
 
     # Brew autoupdate: update once a week (604800 seconds) with --sudo.
     # Uses a NOPASSWD sudoers fragment scoped to /opt/homebrew/bin/brew
@@ -206,7 +213,8 @@ if [ "$(uname)" = "Darwin" ]; then
     brew autoupdate start 604800 --upgrade --cleanup --sudo >/dev/null 2>&1 || true
 
     # OrbStack: lightweight Docker alternative for macOS
-    brew_quiet_install --cask orbstack
+    retry 3 5 brew_quiet_install --cask orbstack ||
+        status_msg "WARN: orbstack cask install failed after 3 attempts — rerun setup.bash to retry."
 
     # Tailscale VPN daemon — `com.$USER.tailscaled` is the sole daemon; boot
     # out homebrew's if present. Two daemons racing on /var/run/tailscaled.socket
@@ -287,28 +295,52 @@ if [ "$(uname)" = "Darwin" ]; then
             status_msg "WARN: 'go install wally-cli' failed; rerun setup.bash to retry."
     fi
 
+    # SlowQuit: hold-to-quit delay on Cmd-Q. Ships only as a DMG (no cask), so a
+    # dedicated pinned+checksummed installer handles the download/mount/copy.
+    # Non-fatal: doctor reports a missing /Applications/SlowQuit.app as a skip.
+    retry 3 5 bash "$DOTFILES_DIR/bin/install-slowquit.bash" ||
+        status_msg "WARN: SlowQuit install failed after 3 attempts — rerun setup.bash or bin/install-slowquit.bash to retry."
+
     # iTerm2 shell integration. Non-fatal for the same reason.
     if [ ! -f "$HOME/.iterm2_shell_integration.bash" ]; then
         curl -fsSL https://iterm2.com/shell_integration/install_shell_integration_and_utilities.sh | bash >/dev/null ||
             status_msg "WARN: iTerm2 shell integration install failed; rerun setup.bash to retry."
     fi
 
+    # iTerm2 reads/writes preferences from the tracked repo copy via "Load
+    # preferences from a custom folder" (takes effect on next iTerm2 launch).
+    # No symlink here: iTerm2 saves prefs atomically (write temp + rename),
+    # which would replace a symlink with a real file and silently de-track it —
+    # hence pointing PrefsCustomFolder at the repo directory itself. The old
+    # ~/Library symlink from that scheme is retired below.
+    defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$DOTFILES_DIR/apps"
+    defaults write com.googlecode.iterm2 LoadPrefsFromCustomFolder -bool true
+    if [ -L "$HOME/Library/com.googlecode.iterm2.plist" ]; then
+        rm -f "$HOME/Library/com.googlecode.iterm2.plist"
+    fi
+
 else # Assume linux
     status_msg "Installing Linux packages..."
 
-    sudo apt-get update -qq
+    retry 3 10 sudo apt-get update -qq ||
+        status_msg "WARN: apt-get update failed after 3 attempts; package installs below may fail."
     # libsecret-tools provides `secret-tool`, the Linux equivalent of macOS
     # `security` used by bin/lib/secret-store.sh for caching bw credentials.
-    sudo apt-get install -y -qq python3-pynvim pipx cron libsecret-tools
+    retry 3 10 sudo apt-get install -y -qq python3-pynvim pipx cron libsecret-tools ||
+        status_msg "WARN: apt-get install failed after 3 attempts; rerun setup.bash to retry."
 fi
 
-# Install CLI tools via uv (not in Brewfile -- they're Python packages)
+# Install CLI tools via uv (not in Brewfile -- they're Python packages).
+# retry+WARN like the other installers so a transient PyPI blip doesn't abort
+# setup before doctor.bash runs — doctor reports either tool if still missing.
 if ! command_exists trash-put; then
-    uv tool install --quiet trash-cli
+    retry 3 5 uv tool install --quiet trash-cli ||
+        status_msg "WARN: 'uv tool install trash-cli' failed after 3 attempts — doctor.bash will report trash-put missing."
 fi
 
 if command_exists uv; then
-    uv tool install --quiet pre-commit --with pre-commit-uv
+    retry 3 5 uv tool install --quiet pre-commit --with pre-commit-uv ||
+        status_msg "WARN: 'uv tool install pre-commit' failed after 3 attempts — doctor.bash will report pre-commit missing."
 fi
 
 # Clear trash which is over 30 days old, monthly
@@ -339,7 +371,13 @@ tmux source ~/.tmux.conf >/dev/null 2>&1 || true
 
 strip_pnpm_from_shell_configs() {
     local file
-    for file in "$HOME/.bashrc" "$HOME/.zshrc" \
+    # $HOME/.bashrc is a symlink to $DOTFILES_DIR/.bashrc (managed_symlinks
+    # already relinked it earlier in this run) — editing the repo source below
+    # is sufficient. `sed -i` doesn't follow symlinks, so also listing
+    # $HOME/.bashrc here would replace the symlink with a standalone real
+    # file, silently de-tracking it (doctor.bash would then FAIL it as "not a
+    # symlink"). $HOME/.zshrc has no repo source and must be edited directly.
+    for file in "$HOME/.zshrc" \
         "$DOTFILES_DIR/apps/fish/config.fish" \
         "$DOTFILES_DIR/.bashrc"; do
         [[ -f "$file" ]] || continue
@@ -447,7 +485,8 @@ fi
 bash "$DOTFILES_DIR/bin/setup_llm.bash"
 
 if [ "$(uname)" != "Darwin" ] && ! command_exists xmllint; then
-    sudo apt-get install -y libxml2-utils
+    retry 3 10 sudo apt-get install -y libxml2-utils ||
+        status_msg "WARN: 'apt-get install libxml2-utils' failed after 3 attempts — doctor.bash will report xmllint missing."
 fi
 
 # Backup existing neovim data (only on first run — skip if .bak already exists to

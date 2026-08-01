@@ -28,69 +28,16 @@ IS_MAC=false
 
 # shellcheck source=lib/symlinks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/symlinks.sh"
+# remove_dotfile_symlink / latest_backup_root live in a lib so they can be
+# unit-tested (tests/test_uninstall.py). This script only ever feeds them
+# managed_symlinks — never repo_hook_symlinks (repo plumbing, per CLAUDE.md).
+# shellcheck source=lib/uninstall-lib.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/uninstall-lib.sh"
 
 ASSUME_YES=false
 if [[ "${1:-}" == "--yes" || "${1:-}" == "-y" ]]; then
     ASSUME_YES=true
 fi
-
-# Most recent backup dir. Stamps are UTC ISO 8601 (e.g. 20260506T143022Z),
-# so lexical max == chronological max. Filter to that pattern so a stray
-# non-stamp directory under ~/.dotfiles-backup (e.g. user notes) can't get
-# picked as "latest" just because it lex-sorts after the stamps.
-latest_backup_root() {
-    [[ -d "$SAFE_LINK_BACKUP_ROOT" ]] || return 1
-    local latest="" entry name
-    for entry in "$SAFE_LINK_BACKUP_ROOT"/*; do
-        [[ -d "$entry" ]] || continue
-        name="${entry##*/}"
-        [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
-        [[ "$name" > "$latest" ]] && latest="$name"
-    done
-    [[ -n "$latest" ]] || return 1
-    printf '%s\n' "$SAFE_LINK_BACKUP_ROOT/$latest"
-}
-
-remove_dotfile_symlink() {
-    local target="$1"
-    local expected_source="$2"
-    if [[ ! -L "$target" ]]; then
-        if [[ -e "$target" ]]; then
-            echo "  skip $target (not a symlink — leaving alone)"
-        fi
-        return
-    fi
-    local actual
-    actual="$(readlink "$target")"
-    if [[ "$actual" != "$expected_source" ]]; then
-        echo "  skip $target -> $actual (not pointing into this dotfiles repo)"
-        return
-    fi
-    if rm -f "$target"; then
-        echo "  removed $target"
-    else
-        echo "  FAILED to remove $target"
-        return 1
-    fi
-    # Try to restore from most recent backup.
-    local backup_root rel src
-    if ! backup_root="$(latest_backup_root)"; then
-        return 0
-    fi
-    if [[ "$target" == "$HOME"/* ]]; then
-        rel="${target#"$HOME"/}"
-    else
-        rel="${target#/}"
-    fi
-    src="$backup_root/$rel"
-    if [[ -e "$src" ]]; then
-        if mv "$src" "$target"; then
-            echo "  restored backup from $src"
-        else
-            echo "  FAILED to restore backup from $src (still at that path)"
-        fi
-    fi
-}
 
 echo ":: Uninstalling dotfiles symlinks from $HOME..."
 echo "   (Backups, if any, will be restored from $SAFE_LINK_BACKUP_ROOT/<latest>/)"
@@ -102,6 +49,14 @@ echo
 while IFS='|' read -r target source _label; do
     remove_dotfile_symlink "$target" "$source"
 done < <(managed_symlinks)
+
+# Bespoke, non-managed symlink: bin/install_fish.bash's accept-presets branch
+# links ~/.config/fish/functions/fish_prompt.fish into the repo (it's kept out
+# of managed_symlinks so the decline-presets `tide configure` path can write a
+# real generated prompt there). remove_dotfile_symlink no-ops on that real
+# file — it only removes the link when it actually points into this repo.
+remove_dotfile_symlink "$HOME/.config/fish/functions/fish_prompt.fish" \
+    "$DOTFILES_DIR/apps/fish/functions/fish_prompt.fish"
 
 if $IS_MAC; then
     # Unload + remove the ccr launch agent. launchctl unload is safe on a
