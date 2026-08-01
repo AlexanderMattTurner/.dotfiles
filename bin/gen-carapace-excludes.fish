@@ -45,12 +45,15 @@ set -l without (mktemp -t carapace-without.XXXXXX)
 
 # The measured run must not read the list it is about to rewrite, or a command
 # already excluded looks like a command carapace never claimed.
+#
+# LC_ALL=C throughout: `join` drops rows without warning when its collation
+# disagrees with the one `sort` used, which would silently shorten the list.
 echo "Measuring with carapace..." >&2
-env -u NO_CARAPACE CARAPACE_EXCLUDES= fish $probe 2>/dev/null | sort >$with
+env -u NO_CARAPACE CARAPACE_EXCLUDES= fish $probe 2>/dev/null | env LC_ALL=C sort >$with
 echo "Measuring without carapace..." >&2
-env NO_CARAPACE=1 fish $probe 2>/dev/null | sort >$without
+env NO_CARAPACE=1 fish $probe 2>/dev/null | env LC_ALL=C sort >$without
 
-set -l losers (join $with $without | awk '$2+0 < $3+0 {print $1}' | sort)
+set -l losers (env LC_ALL=C join $with $without | awk '$2+0 < $3+0 {print $1}' | env LC_ALL=C sort)
 
 begin
     echo '# Commands that carapace must not handle.'
