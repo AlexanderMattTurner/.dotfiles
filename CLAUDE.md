@@ -9,7 +9,7 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   Always finishes by running `bin/doctor.bash` so the user sees a green
   health summary (or knows exactly what's still broken).
 - `claude-guard/` — cloned repo
-  (`alexander-turner/claude-guard`), `.gitignore`d.
+  (`AlexanderMattTurner/agent-glovebox`), `.gitignore`d.
   `setup.bash` (via `bin/clone-claude-guard.bash`) checks it out at the
   commit pinned in `claude-guard.ref` on every run — the subrepo carries
   the AI-safety monitor, so it is pinned like any security-critical

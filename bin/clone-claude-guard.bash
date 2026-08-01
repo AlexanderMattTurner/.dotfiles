@@ -17,7 +17,7 @@ set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_GUARD_DIR="$DOTFILES_DIR/claude-guard"
-CLAUDE_GUARD_URL="https://github.com/alexander-turner/claude-guard.git"
+CLAUDE_GUARD_URL="https://github.com/AlexanderMattTurner/agent-glovebox.git"
 REF_FILE="$DOTFILES_DIR/claude-guard.ref"
 
 # shellcheck source=lib/retry.sh disable=SC1091
