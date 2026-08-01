@@ -16,6 +16,10 @@ set -euo pipefail
 
 _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DOTFILES_DIR="${DOTFILES_DIR:-$(git -C "$_self_dir" rev-parse --show-toplevel)}"
+# This script authenticates entirely from the cached master password, so it
+# has no use for a prompt — and config.fish runs it backgrounded at shell
+# startup, where a prompt blocks forever instead of failing. See bwx().
+export BW_NONINTERACTIVE=1
 # shellcheck source=bin/lib/bw-common.sh disable=SC1091
 # bw-common.sh transitively sources bin/lib/secret-store.sh, which defines
 # secret_store_required_cmd used below.
@@ -40,7 +44,7 @@ bw_require_logged_in || exit 1
 bw_ensure_session || exit 1
 keychain_ensure_unlocked || exit 1 # envchain writes need an unlocked Keychain on macOS
 
-"$BW_CMD" sync >/dev/null 2>&1 || true
+bwx sync >/dev/null 2>&1 || true
 
 # shellcheck disable=SC2119  # no args = lookup-only mode
 folder_id=$(bw_envchain_folder_id) || exit 0 # nothing to seed yet
@@ -63,7 +67,7 @@ seed_one() {
     fi
     # Split bw and jq so a bw failure doesn't trip pipefail+set-e and kill
     # the whole loop silently. `|| { ... }` keeps set -e quiet either way.
-    item_json=$("$BW_CMD" get item "$id" 2>/dev/null) || {
+    item_json=$(bwx get item "$id" 2>/dev/null) || {
         err "  FAIL   $ns/$var (bw get item rc=$?)"
         return 0
     }
@@ -80,7 +84,7 @@ seed_one() {
     unset pw item_json
 }
 
-items_json=$("$BW_CMD" list items --folderid "$folder_id")
+items_json=$(bwx list items --folderid "$folder_id")
 count=$(printf '%s' "$items_json" | jq 'length')
 log "Seeding $count items from Bitwarden folder envchain → envchain..."
 
