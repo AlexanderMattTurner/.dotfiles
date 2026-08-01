@@ -323,6 +323,21 @@ else
     skip "rotation proxy" "every seeded account is at its usage limit right now (transient)"
 fi
 
+# A locked vault makes `bw list folders` block forever, so a wedged autosync
+# from config.fish's _bw_envchain_autosync is invisible until hundreds have
+# piled up (200 had, once). More than a couple at a time means the throttle or
+# the timeout guarding that background job has regressed.
+if command -v pgrep >/dev/null 2>&1; then
+    stuck_seeds="$(pgrep -fc 'bw-seed-envchain' 2>/dev/null || echo 0)"
+    if ((stuck_seeds <= 2)); then
+        pass "no wedged bw-seed-envchain processes"
+    else
+        fail "bw-seed-envchain" "$stuck_seeds running at once (kill: pkill -f bw-seed-envchain; then check the timeout in _bw_envchain_autosync)"
+    fi
+else
+    skip "bw-seed-envchain leak" "pgrep not available"
+fi
+
 # ── Brewfile ────────────────────────────────────────────────────────────────
 section "Brewfile"
 
