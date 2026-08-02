@@ -83,5 +83,6 @@
   },
   "theme": "dark-ansi",
   "editorMode": "vim",
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "opus"
 }

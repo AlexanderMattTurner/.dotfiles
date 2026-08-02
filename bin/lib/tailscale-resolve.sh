@@ -46,6 +46,29 @@ tailscale_health() {
     esac
 }
 
+# Detect CLI↔daemon version skew for $1 (path to a tailscale CLI).
+# `brew upgrade tailscale` swaps the CLI binary but leaves the old tailscaled
+# running; a skewed pair has mishandled exit-node teardown (`tailscale set
+# --exit-node=` blackholes all traffic instead of restoring the default
+# route). Returns 0 (silent) when versions match or either side is
+# unreadable; returns 1 and prints "client=X daemon=Y" on skew.
+#
+# Consumers that must stay in sync (see CLAUDE.md "Tailscale daemon"):
+# apps/swiftbar/vpn.10s.bash, bin/tailscale-set-exit-node.bash,
+# bin/doctor.bash, setup.bash, tests/test_tailscale_health.py.
+tailscale_version_skew() {
+    local client daemon
+    client="$("$1" version 2>/dev/null | head -n1)"
+    daemon="$("$1" status --json 2>/dev/null | grep -m1 '"Version"')"
+    daemon="${daemon#*: \"}"
+    daemon="${daemon%%-*}"
+    if [ -z "$client" ] || [ -z "$daemon" ] || [ "$client" = "$daemon" ]; then
+        return 0
+    fi
+    printf 'client=%s daemon=%s\n' "$client" "$daemon"
+    return 1
+}
+
 # Print absolute path to a working tailscale CLI; non-zero if none found.
 find_tailscale() {
     local c
