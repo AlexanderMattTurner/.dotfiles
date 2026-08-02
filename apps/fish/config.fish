@@ -368,7 +368,7 @@ function bwadd --description 'Add a new secret to Bitwarden + envchain'
 end
 
 function _bw_envchain_autosync
-    # Throttle: skip if last successful run was within the past 6h.
+    # Throttle: skip if the last *attempt* was within the past 6h.
     # stat syntax differs across platforms; try GNU (-c %Y) then BSD (-f %m).
     # Either errors when the stamp doesn't exist; the `or echo 0` forces
     # mtime=0 in that case so the throttle fails through to a sync.
@@ -379,7 +379,25 @@ function _bw_envchain_autosync
     if test (math (date +%s) - $mtime) -lt $interval
         return 0
     end
-    fish -c "if bash '$DOTFILES_DIR/bin/bw-seed-envchain.bash' --quiet >/dev/null 2>&1; touch '$stamp'; end" &
+    # Stamp before running, not after succeeding. `bw` blocks indefinitely on a
+    # locked vault — it prompts for the master password on a stdin this
+    # background job can never supply — so a success-only stamp meant every new
+    # interactive shell spawned another wedged `bw list folders` that never
+    # exited. Three guards, since any one alone still leaks:
+    #   * stamp up front, so a failing vault costs one attempt per interval
+    #   * </dev/null, so bw fails fast instead of waiting on a prompt
+    #   * timeout, so a network/CLI stall cannot outlive the interval
+    # Run `bwseed` by hand to sync immediately without waiting out the throttle.
+    touch $stamp 2>/dev/null
+    set -l seed_cmd "bash '$DOTFILES_DIR/bin/bw-seed-envchain.bash' --quiet"
+    if type -q timeout
+        # Only a backstop now that the script runs bw with --nointeraction:
+        # a full seed legitimately takes ~2 min (one `bw get item` per secret),
+        # so this ceiling has to clear that by a wide margin or it would kill
+        # healthy syncs partway through. -k SIGKILLs if SIGTERM is ignored.
+        set seed_cmd "timeout -k 30 600 $seed_cmd"
+    end
+    fish -c "$seed_cmd >/dev/null 2>&1" </dev/null &
     disown
 end
 
