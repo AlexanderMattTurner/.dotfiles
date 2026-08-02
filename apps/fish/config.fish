@@ -29,11 +29,10 @@ end
 # (continuum-restore fires here). Subsequent windows: server is up, so spawn a
 # fresh independent session per window for parallel layouts.
 #
-# Deliberately NOT `exec`: replacing fish with tmux means detaching (or the
-# session exiting) tears down the only process in the window, so iTerm closes
-# it. Running tmux as a child instead drops you back to a fish prompt on
-# detach and keeps the window open.
-if status is-interactive; and not set -q TMUX; and command -q tmux
+# Escape hatch: set NO_AUTO_TMUX (any value) to skip the exec — editor-embedded
+# terminals, one-off interactive shells, and remote sessions don't want it.
+# One shell:  NO_AUTO_TMUX=1 fish     Permanently:  set -Ux NO_AUTO_TMUX 1
+if status is-interactive; and not set -q TMUX; and not set -q NO_AUTO_TMUX; and command -q tmux
     if tmux has-session 2>/dev/null
         tmux new-session
     else
@@ -141,7 +140,7 @@ if $IS_MAC
 end
 
 function flash
-    sh "$DOTFILES_DIR/bin/keyboard_flash.bash"
+    bash "$DOTFILES_DIR/bin/keyboard_flash.bash"
 end
 
 function pytest
@@ -234,6 +233,11 @@ end
 fish_add_path ~/bin ~/.local/bin /usr/local/go/bin
 set -gx EDITOR nvim
 set -gx SHELL (status fish-path)
+
+# less draws on the alternate screen, where tmux forwards the wheel to the app
+# rather than opening copy-mode. Without --mouse, less requests no mouse
+# tracking and the event is dropped, so the pane looks unscrollable.
+set -gx LESS '-R --mouse --wheel-lines=3'
 
 abbr -a n nvim
 
@@ -339,10 +343,20 @@ function twine
     envchain pypi command twine $argv
 end
 
-# Aider via Redpill: envchain populates REDPILL_API_KEY into the child
-# process; the shim script remaps it onto OPENAI_API_KEY and execs aider.
-function aider_redpill
-    envchain ai "$DOTFILES_DIR/bin/aider-redpill-shim.sh" (type -p aider) --edit-format editor-diff $argv
+# Aider via Venice (E2EE — the only permitted provider; see CLAUDE.md
+# "AI provider routing"). envchain populates VENICE_INFERENCE_KEY into the
+# bash -c's environment; the inline remap onto OPENAI_API_KEY (what
+# aider's litellm backend reads for openai-compatible providers) happens
+# there, at runtime, so the key never touches fish variable expansion or
+# argv — no separate shim script needed for a three-var remap.
+function aider_venice
+    envchain ai bash -c 'OPENAI_API_KEY=$VENICE_INFERENCE_KEY OPENAI_API_BASE=https://api.venice.ai/api/v1 AIDER_MODEL=openai/claude-sonnet-4-6 exec "$0" --edit-format editor-diff "$@"' (type -p aider) $argv
+end
+
+# llm via Venice — same inline remap. Default model (venice-sonnet) is
+# written by bin/setup_llm.bash into llm's extra-openai-models.yaml.
+function llm
+    envchain ai bash -c 'OPENAI_API_KEY=$VENICE_INFERENCE_KEY OPENAI_API_BASE=https://api.venice.ai/api/v1 exec "$0" "$@"' (command -s llm) $argv
 end
 
 # ── Bitwarden sync helpers ────────────────────────────────────────────────
@@ -359,7 +373,7 @@ function bwadd --description 'Add a new secret to Bitwarden + envchain'
 end
 
 function _bw_envchain_autosync
-    # Throttle: skip if last successful run was within the past 6h.
+    # Throttle: skip if the last *attempt* was within the past 6h.
     # stat syntax differs across platforms; try GNU (-c %Y) then BSD (-f %m).
     # Either errors when the stamp doesn't exist; the `or echo 0` forces
     # mtime=0 in that case so the throttle fails through to a sync.
@@ -370,7 +384,25 @@ function _bw_envchain_autosync
     if test (math (date +%s) - $mtime) -lt $interval
         return 0
     end
-    fish -c "if bash '$DOTFILES_DIR/bin/bw-seed-envchain.bash' --quiet >/dev/null 2>&1; touch '$stamp'; end" &
+    # Stamp before running, not after succeeding. `bw` blocks indefinitely on a
+    # locked vault — it prompts for the master password on a stdin this
+    # background job can never supply — so a success-only stamp meant every new
+    # interactive shell spawned another wedged `bw list folders` that never
+    # exited. Three guards, since any one alone still leaks:
+    #   * stamp up front, so a failing vault costs one attempt per interval
+    #   * </dev/null, so bw fails fast instead of waiting on a prompt
+    #   * timeout, so a network/CLI stall cannot outlive the interval
+    # Run `bwseed` by hand to sync immediately without waiting out the throttle.
+    touch $stamp 2>/dev/null
+    set -l seed_cmd "bash '$DOTFILES_DIR/bin/bw-seed-envchain.bash' --quiet"
+    if type -q timeout
+        # Only a backstop now that the script runs bw with --nointeraction:
+        # a full seed legitimately takes ~2 min (one `bw get item` per secret),
+        # so this ceiling has to clear that by a wide margin or it would kill
+        # healthy syncs partway through. -k SIGKILLs if SIGTERM is ignored.
+        set seed_cmd "timeout -k 30 600 $seed_cmd"
+    end
+    fish -c "$seed_cmd >/dev/null 2>&1" </dev/null &
     disown
 end
 
@@ -379,27 +411,23 @@ if status is-interactive; and type -q bw
 end
 
 # Tailscale's Mullvad exit node — choice persists in daemon prefs across reboots.
+# Routes set/clear through tailscale-set-exit-node.bash so the exit-node list
+# and daemon health checks live in one place (bin/lib/tailscale-resolve.sh).
 function mullvad --description 'Switch Tailscale Mullvad exit node'
-    switch "$argv[1]"
-        case ca
-            tailscale set --exit-node=ca-mtr-wg-001.mullvad.ts.net --exit-node-allow-lan-access=true
-        case jp
-            tailscale set --exit-node=jp-tyo-wg-001.mullvad.ts.net --exit-node-allow-lan-access=true
-        case us
-            tailscale set --exit-node=us-chi-wg-301.mullvad.ts.net --exit-node-allow-lan-access=true
-        case off
-            tailscale set --exit-node=
+    if test (count $argv) -eq 0
+        echo "usage: mullvad [ca|jp|us|off|ls|st]" >&2
+        return 1
+    end
+    switch $argv[1]
         case ls list
             tailscale exit-node list
-            return
         case st status
             tailscale status | head -3
-            return
         case '*'
-            echo "usage: mullvad [ca|jp|us|off|ls|st]"
-            return 1
+            if bash "$DOTFILES_DIR/bin/tailscale-set-exit-node.bash" "$argv[1]"
+                tailscale status | head -3
+            end
     end
-    tailscale status | head -3
 end
 
 abbr -a mvca 'mullvad ca'
@@ -428,4 +456,3 @@ function brew --wraps brew --description 'Guard against starting homebrew tailsc
 end
 
 fish_add_path $HOME/go/bin
-

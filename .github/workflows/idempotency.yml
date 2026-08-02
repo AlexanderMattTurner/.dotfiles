@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main, master]
 
+# Read-only smoke job: it never pushes, so drop the token to contents:read
+# (every other workflow in this repo scopes GITHUB_TOKEN explicitly).
+permissions:
+  contents: read
+
+# Read-only checks, but push+pull_request double-triggers make overlapping
+# runs on the same ref routine waste — newest run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Verifies setup.bash --link-only is safely re-runnable. Running it twice in
 # an isolated $HOME must produce identical symlink sets and zero "Skipping"
 # / "Overwrite?" / "backed up to" output on the second pass. doctor.bash is
@@ -26,10 +37,15 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Read-only job — don't leave the checkout token usable by later steps.
+          persist-credentials: false
 
-      - name: Clone claude-guard
-        run: git clone https://github.com/alexander-turner/claude-guard.git claude-guard
+      - name: Clone claude-guard (pinned)
+        # Checks out the commit in claude-guard.ref so the symlink set under
+        # test matches what setup.bash installs.
+        run: bash bin/clone-claude-guard.bash
 
       - name: Run idempotency check
         env:
@@ -41,20 +57,9 @@ jobs:
         run: bash bin/check-idempotency.bash
 
       - name: Doctor reports symlinks healthy
-        run: |
-          set -uo pipefail
-          export HOME="$RUNNER_TEMP/fakehome"
-          # We tolerate FAILs from "Required commands" / "Brewfile" / "tmux"
-          # (brew/fish/nvim/zoxide aren't fully installed in this minimal job)
-          # but every Symlinks check must PASS.
-          out=$(bash bin/doctor.bash --verbose || true)
-          echo "$out"
-          symlinks_section=$(echo "$out" | awk '/=== Symlinks ===/{flag=1;next} /^=== /{flag=0} flag')
-          if [ -z "$symlinks_section" ]; then
-            echo "::error::doctor.bash --verbose produced no Symlinks section (section header changed?)" >&2
-            exit 1
-          fi
-          if echo "$symlinks_section" | grep -q "FAIL"; then
-            echo "::error::doctor.bash reported a symlink FAIL after setup.bash --link-only" >&2
-            exit 1
-          fi
+        # Tolerate FAILs from "Required commands" / "Brewfile" / "tmux"
+        # (brew/fish/nvim/zoxide aren't fully installed in this minimal job)
+        # but every Symlinks check must PASS.
+        env:
+          HOME: ${{ runner.temp }}/fakehome
+        run: bash bin/check-doctor-symlinks.bash

@@ -23,6 +23,27 @@ source "${BASH_SOURCE[0]%/*}/keychain.sh"
 # a fallback — it has session/output quirks these scripts can't dodge.
 BW_CMD="${BW_CMD:-bw-node}"
 
+# Run bw, adding --nointeraction when the caller declared itself unattended
+# by exporting BW_NONINTERACTIVE=1 before sourcing this file.
+#
+# Without that flag, a bw subcommand that finds the vault locked or the
+# session expired falls back to prompting for the master password on stdin.
+# From a backgrounded shell-startup job nobody can ever answer it, so the
+# process blocks forever — 200 of them had accumulated over five days before
+# this was noticed, each pinning a `node bw.js` child. Failing fast is always
+# the right call unattended; a human at a terminal still gets the prompt.
+#
+# A wrapper rather than an args array because `"${arr[@]}"` on an empty array
+# is an unbound-variable error under `set -u` in bash 3.2, which is the
+# /bin/bash these scripts can land on.
+bwx() {
+    if [ -n "${BW_NONINTERACTIVE:-}" ]; then
+        "$BW_CMD" --nointeraction "$@"
+    else
+        "$BW_CMD" "$@"
+    fi
+}
+
 # Verify the required external commands are on PATH. Usage:
 #   bw_require_cmds bw jq envchain security
 # Empty arguments are skipped — callers can splice in
@@ -43,7 +64,7 @@ bw_require_cmds() {
 
 # Return 0 if bw has any session at all (locked or unlocked), 1 otherwise.
 bw_is_logged_in() {
-    "$BW_CMD" status --raw 2>/dev/null | grep -qE '"status":"(locked|unlocked)"'
+    bwx status --raw 2>/dev/null | grep -qE '"status":"(locked|unlocked)"'
 }
 
 # Exit-style guard: errors out if not logged in.
@@ -60,6 +81,13 @@ bw_require_logged_in() {
 # `--passwordenv` — Node bw silently ignores `--passwordfile` and falls
 # back to an interactive prompt that crashes inquirer on piped stdin
 # ("readline was closed" on Node 20+). Env var scoped to the subprocess.
+#
+# The session key must reach bw ONLY via the exported BW_SESSION env var,
+# never as a `--session` argument — argv is readable by any same-user
+# process (`ps -eo args`), which is exactly the exposure the "secrets
+# never on argv" rule in CLAUDE.md exists to prevent. bw reads
+# BW_SESSION from the environment natively. Guarded by
+# tests/test_security_argv.py::test_bw_session_never_on_argv.
 bw_ensure_session() {
     if [ -n "${BW_SESSION:-}" ]; then
         export BW_SESSION
@@ -72,7 +100,7 @@ bw_ensure_session() {
         return 1
     fi
     local out rc
-    out=$(BW_PASSWORD="$mp" "$BW_CMD" unlock --raw --passwordenv BW_PASSWORD 2>/dev/null)
+    out=$(BW_PASSWORD="$mp" bwx unlock --raw --passwordenv BW_PASSWORD 2>/dev/null)
     rc=$?
     unset mp
     # Rust bw 2026.x writes ERROR lines to stdout on unlock failure, so a
@@ -91,7 +119,7 @@ bw_ensure_session() {
 # shellcheck disable=SC2119  # callers intentionally invoke without args
 bw_envchain_folder_id() {
     local fid
-    fid=$("$BW_CMD" list folders --session "$BW_SESSION" |
+    fid=$(bwx list folders |
         jq -r '.[] | select(.name=="envchain") | .id' | head -n1)
     if [ -n "$fid" ]; then
         printf '%s\n' "$fid"
@@ -101,16 +129,16 @@ bw_envchain_folder_id() {
         echo "No 'envchain' folder in vault." >&2
         return 1
     fi
-    "$BW_CMD" get template folder |
+    bwx get template folder |
         jq '.name="envchain"' |
-        "$BW_CMD" encode |
-        "$BW_CMD" create folder --session "$BW_SESSION" |
+        bwx encode |
+        bwx create folder |
         jq -r '.id'
 }
 
 # Return 0 if an item with the given name exists in the given folder.
 bw_item_exists() {
     local folder_id="$1" name="$2"
-    "$BW_CMD" list items --folderid "$folder_id" --session "$BW_SESSION" |
+    bwx list items --folderid "$folder_id" |
         jq -e --arg n "$name" '.[] | select(.name==$n)' >/dev/null
 }

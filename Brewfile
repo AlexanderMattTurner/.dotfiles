@@ -38,9 +38,6 @@ brew "carapace"
 # in config.fish so envchain ai populates VENICE_INFERENCE_KEY.
 brew "charmbracelet/tap/mods"
 
-# Fonts
-cask "font-fira-code-nerd-font"
-
 # Formatters (conform.nvim, lint.bash)
 brew "stylua"
 brew "ruff"
@@ -72,6 +69,9 @@ if OS.mac?
   brew "toilet"
   brew "yakitrak/yakitrak/obsidian-cli"
   brew "rishikanthc/scriberr/scriberr"
+
+  # Fonts
+  cask "font-fira-code-nerd-font"
 
   # Casks
   cask "orbstack"

@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main, master]
 
+# Read-only round-trip test: it never pushes, so drop the token to
+# contents:read (every other workflow in this repo scopes GITHUB_TOKEN).
+permissions:
+  contents: read
+
+# Read-only checks, but push+pull_request double-triggers make overlapping
+# runs on the same ref routine waste — newest run wins.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Enforces the CLAUDE.md "Uninstall upkeep" contract: every safe_link in
 # setup.bash whose target lives in $HOME has a matching remove in uninstall.bash.
 # Test logic lives in tests/test_uninstall_roundtrip.py — pytest gives clean
@@ -26,8 +37,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Read-only job — don't leave the checkout token usable by later steps.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
           # Pin uv's default Python so `uv tool install` builds the

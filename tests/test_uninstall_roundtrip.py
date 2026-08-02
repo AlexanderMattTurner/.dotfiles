@@ -48,3 +48,35 @@ def test_uninstall_removes_every_setup_symlink(tmp_path: Path) -> None:
         "safe_link in setup.bash has no matching entry in bin/lib/symlinks.sh. "
         f"Leftover: {leftover}"
     )
+
+
+def test_uninstall_restores_most_recent_backup(tmp_path: Path) -> None:
+    """CLAUDE.md: uninstall.bash "restor[es] the most recent backup when one
+    exists." Simulates the post-safe_link-backup state directly (a symlink at
+    the target plus a same-named file under the latest backup stamp dir)
+    rather than driving safe_link's interactive clobber prompt.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    backup_root = home / ".dotfiles-backup"
+
+    older = backup_root / "20260101T000000Z"
+    older.mkdir(parents=True)
+    (older / ".gitconfig").write_text("stale backup — must not be restored\n")
+
+    latest = backup_root / "20260102T000000Z"
+    latest.mkdir(parents=True)
+    original_content = "[user]\n\tname = Original User\n"
+    (latest / ".gitconfig").write_text(original_content)
+
+    target = home / ".gitconfig"
+    target.symlink_to(DOTFILES / ".gitconfig")
+
+    subprocess.run(
+        ["bash", str(DOTFILES / "bin" / "uninstall.bash"), "--yes"],
+        env={**os.environ, "HOME": str(home)},
+        check=True,
+    )
+
+    assert not target.is_symlink()
+    assert target.read_text() == original_content

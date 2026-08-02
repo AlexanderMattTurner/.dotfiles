@@ -54,6 +54,17 @@ repos:
       - id: yamllint
         args: [-d, "{extends: relaxed, rules: {line-length: disable}}"]
 
+  # yamllint only checks generic YAML; actionlint understands GitHub Actions —
+  # `if:` expression types, unknown action inputs, shell-quoting in `run:`
+  # blocks (via shellcheck when present) — the class of bug yamllint can't see
+  # (e.g. the `inputs.dry-run == 'true'` string-vs-bool trap noted in CLAUDE.md).
+  # `language: golang` builds actionlint from the pinned rev using the runner's
+  # Go toolchain, so no separate install step is needed in CI.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -94,7 +105,23 @@ repos:
         entry: bin/check-sh-extension.bash
         language: script
         files: \.sh$
-        exclude: ^bin/lib/
+        # bin/lib/: sourced libraries, no shebang to check anyway.
+        # .github/scripts/, .hooks/lint-skills.sh: populated verbatim by
+        # template-sync from claude-automation-template, which names its own
+        # bash scripts *.sh — renaming them here would just have next week's
+        # sync recreate the .sh originals alongside the renamed .bash copies.
+        exclude: ^(bin/lib/|\.github/scripts/|\.hooks/lint-skills\.sh$)
+
+      - id: lint-skills
+        name: validate Claude Code skill structure
+        # .hooks/lint-skills.sh is the template-synced validator (frontmatter,
+        # name:/description:, directory format). It shipped unwired; this hook
+        # is where it actually runs. Kept as the template's *.sh name (already
+        # exempted from sh-extension above) so upstream fixes flow in via
+        # template-sync instead of forking a local *.bash copy.
+        entry: .hooks/lint-skills.sh
+        language: script
+        files: ^\.claude/skills/.*\.md$
 
       - id: no-future-import
         name: ban "from __future__" imports
@@ -119,11 +146,12 @@ repos:
 
       - id: security-argv-tests
         name: pytest tests/test_security_argv.py
-        # Regression guard: macOS Keychain secrets must not transit argv.
+        # Regression guard: secrets (Keychain values, BW_SESSION) must not
+        # transit argv anywhere under bin/.
         entry: pytest -q tests/test_security_argv.py
         language: system
         pass_filenames: false
-        files: ^(bin/lib/(secret-store|keychain)\.sh|tests/test_security_argv\.py)$
+        files: ^(bin/.*\.(bash|sh)|tests/test_security_argv\.py)$
 
       - id: gitleaks
         name: gitleaks detect

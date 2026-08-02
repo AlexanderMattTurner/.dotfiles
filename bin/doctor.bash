@@ -42,6 +42,12 @@ IS_MAC=false
 
 # shellcheck source=lib/symlinks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/symlinks.sh"
+# shellcheck source=lib/claude-guard-pin.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/claude-guard-pin.sh"
+# check_symlink / check_command live in a lib so they can be unit-tested; they
+# call the pass/fail reporters defined below and bump MANAGED_LINK_FAIL.
+# shellcheck source=lib/doctor-checks.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/doctor-checks.sh"
 
 if [[ -t 1 ]]; then
     GREEN='\033[0;32m'
@@ -89,31 +95,6 @@ _maybe_print_section() {
 section "Symlinks"
 
 MANAGED_LINK_FAIL=0
-check_symlink() {
-    local target="$1"
-    local expected_source="$2"
-    local label="$3"
-    if [[ ! -L "$target" ]]; then
-        if [[ -e "$target" ]]; then
-            fail "$label" "$target exists but is not a symlink"
-        else
-            fail "$label" "$target missing (run setup.bash --link-only)"
-        fi
-        MANAGED_LINK_FAIL=$((MANAGED_LINK_FAIL + 1))
-        return
-    fi
-    local actual
-    actual="$(readlink "$target")"
-    if [[ "$actual" != "$expected_source" ]]; then
-        fail "$label" "$target -> $actual, expected $expected_source"
-        MANAGED_LINK_FAIL=$((MANAGED_LINK_FAIL + 1))
-    elif [[ ! -e "$target" ]]; then
-        fail "$label" "$target -> $expected_source (dangling — source does not exist)"
-        MANAGED_LINK_FAIL=$((MANAGED_LINK_FAIL + 1))
-    else
-        pass "$label"
-    fi
-}
 
 # Iterate both shared lists from bin/lib/symlinks.sh (sourced above).
 while IFS='|' read -r target source label; do
@@ -137,17 +118,31 @@ if [[ $stale_count -eq 0 ]]; then
     pass "no stale dotfiles symlinks"
 fi
 
+# ── claude-guard pin ────────────────────────────────────────────────────────
+section "claude-guard"
+
+CG_DIR="$DOTFILES_DIR/claude-guard"
+CG_REF_FILE="$DOTFILES_DIR/claude-guard.ref"
+case "$(claude_guard_pin_status "$CG_DIR" "$CG_REF_FILE")" in
+not-cloned)
+    skip "claude-guard checkout" "not cloned (run setup.bash or bin/clone-claude-guard.bash)"
+    ;;
+missing-ref)
+    fail "claude-guard pin" "claude-guard.ref missing from the repo"
+    ;;
+pinned)
+    cg_pinned="$(<"$CG_REF_FILE")"
+    pass "claude-guard at pinned ref (${cg_pinned:0:7})"
+    ;;
+drifted)
+    cg_pinned="$(<"$CG_REF_FILE")"
+    cg_head="$(git -C "$CG_DIR" rev-parse HEAD 2>/dev/null)"
+    fail "claude-guard pin" "HEAD ${cg_head:0:7} != pinned ${cg_pinned:0:7} — run bin/clone-claude-guard.bash (or --bump to move the pin)"
+    ;;
+esac
+
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
-
-check_command() {
-    local cmd="$1"
-    if command -v "$cmd" >/dev/null 2>&1; then
-        pass "$cmd"
-    else
-        fail "$cmd" "not on PATH"
-    fi
-}
 
 for cmd in git fish nvim tmux brew zoxide gh fzf rg fd bat eza delta tokei dust btm mise carapace shfmt mods gitleaks pre-commit uv; do
     check_command "$cmd"
@@ -207,6 +202,21 @@ for cmd in pnpm ccr aider llm wut devcontainer; do
     fi
 done
 
+# Optional formatters wired into nvim's conform.lua: xmllint comes from
+# libxml2-utils (Linux apt) / libxml2 (brew), prettier from `pnpm install -g`
+# in setup.bash. Formatting quietly degrades without them, so surface a skip.
+for cmd in xmllint prettier; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+        pass "$cmd"
+    else
+        case "$cmd" in
+        xmllint) hint="run: sudo apt-get install libxml2-utils (Linux) or brew install libxml2 (macOS)" ;;
+        prettier) hint="run: pnpm install -g prettier (or bash setup.bash)" ;;
+        esac
+        skip "$cmd" "$hint"
+    fi
+done
+
 if $IS_MAC; then
     # wally-cli is installed on-demand (go install) and only needed for ZSA
     # keyboard flashing — skip rather than fail when it's absent.
@@ -221,6 +231,13 @@ if $IS_MAC; then
         pass "codium"
     else
         skip "codium" "not on PATH (run setup.bash or: brew install --cask vscodium)"
+    fi
+    # SlowQuit: DMG-installed by bin/install-slowquit.bash (no cask). Skip rather
+    # than fail when absent — it's a convenience app, not required plumbing.
+    if [ -d "/Applications/SlowQuit.app" ]; then
+        pass "SlowQuit.app"
+    else
+        skip "SlowQuit.app" "not installed (run setup.bash or: bash bin/install-slowquit.bash)"
     fi
 fi
 
@@ -273,15 +290,65 @@ else
     skip "envchain" "not installed"
 fi
 
+# Mid-session rotation is the loopback proxy (bin/claude-rotate-proxy.py) the claude
+# fish wrapper points ANTHROPIC_BASE_URL at. The old apiKeyHelper wiring is gone; a
+# settings.json that still carries it points at a --helper mode that no longer
+# exists and would break every session, so flag that drift.
+claude_settings="$HOME/.claude/settings.json"
+if ! command -v jq >/dev/null 2>&1; then
+    skip "rotation settings" "jq not installed"
+elif [[ ! -f "$claude_settings" ]]; then
+    skip "rotation settings" "\$HOME/.claude/settings.json missing (run setup.bash)"
+elif [[ -n "$(jq -re '.apiKeyHelper // ""' "$claude_settings" 2>/dev/null)" ]]; then
+    fail "rotation settings" "settings.json still sets apiKeyHelper — mid-session rotation is now the loopback proxy; re-run setup.bash to refresh the symlink"
+else
+    pass "settings.json has no stale apiKeyHelper"
+fi
+
+# The rotation proxy and the selection engine it drives. The dry run gates
+# CLAUDE_ACCOUNT_NO_CONVERGE so a health check never re-points live sandboxes; it
+# may still spend the cache-gated probe any --pick does.
+proxy="$DOTFILES_DIR/bin/claude-rotate-proxy.py"
+if ! command -v python3 >/dev/null 2>&1; then
+    skip "rotation proxy" "python3 not installed"
+elif ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$proxy" 2>/dev/null; then
+    fail "rotation proxy" "$proxy does not parse"
+elif ! command -v envchain >/dev/null 2>&1; then
+    skip "rotation proxy" "envchain not installed"
+elif [[ -z "$("$DOTFILES_DIR/bin/claude-account.bash" --namespaces 2>/dev/null)" ]]; then
+    skip "rotation proxy" "no subscription account seeded (claude setup-token; envchain --set <ns> CLAUDE_CODE_OAUTH_TOKEN)"
+elif CLAUDE_ACCOUNT_NO_CONVERGE=1 "$DOTFILES_DIR/bin/claude-account.bash" --pick >/dev/null 2>&1; then
+    pass "rotation proxy + claude-account --pick serve an account"
+else
+    skip "rotation proxy" "every seeded account is at its usage limit right now (transient)"
+fi
+
+# A locked vault makes `bw list folders` block forever, so a wedged autosync
+# from config.fish's _bw_envchain_autosync is invisible until hundreds have
+# piled up (200 had, once). More than a couple at a time means the throttle or
+# the timeout guarding that background job has regressed.
+if command -v pgrep >/dev/null 2>&1; then
+    stuck_seeds="$(pgrep -fc 'bw-seed-envchain' 2>/dev/null || echo 0)"
+    if ((stuck_seeds <= 2)); then
+        pass "no wedged bw-seed-envchain processes"
+    else
+        fail "bw-seed-envchain" "$stuck_seeds running at once (kill: pkill -f bw-seed-envchain; then check the timeout in _bw_envchain_autosync)"
+    fi
+else
+    skip "bw-seed-envchain leak" "pgrep not available"
+fi
+
 # ── Brewfile ────────────────────────────────────────────────────────────────
 section "Brewfile"
 
 if command -v brew >/dev/null 2>&1; then
-    if (cd "$DOTFILES_DIR" && brew bundle check --no-upgrade --file=Brewfile >/dev/null 2>&1); then
+    # Single invocation — `brew bundle check` is slow, so reuse its output
+    # for the failure summary instead of running it twice.
+    if bundle_out="$(cd "$DOTFILES_DIR" && brew bundle check --no-upgrade --file=Brewfile 2>&1)"; then
         pass "all Brewfile entries installed"
     else
         # Surface the first missing entries so the user knows what to install.
-        missing_summary="$(cd "$DOTFILES_DIR" && brew bundle check --no-upgrade --file=Brewfile 2>&1 | head -3 | tr '\n' '; ')"
+        missing_summary="$(printf '%s\n' "$bundle_out" | head -3 | tr '\n' '; ')"
         fail "Brewfile" "missing entries (${missing_summary%; }) — run 'brew bundle --file=$DOTFILES_DIR/Brewfile'"
     fi
 else
@@ -298,6 +365,21 @@ elif [[ -d "$TPM_DIR/.git" ]]; then
     pass "tmux plugin manager (TPM) cloned"
 else
     fail "TPM" "$TPM_DIR is not a git checkout (run setup.bash)"
+fi
+
+# The session reaper that keeps @continuum-restore from resurrecting empty
+# shells forever. Both halves must hold: an executable script, and the hooks
+# in .tmux.conf that actually run it.
+if [[ -x "$DOTFILES_DIR/bin/tmux-gc.bash" ]]; then
+    pass "tmux-gc script executable"
+else
+    fail "tmux-gc" "$DOTFILES_DIR/bin/tmux-gc.bash is missing or not executable"
+fi
+
+if grep -q 'tmux-gc' "$DOTFILES_DIR/.tmux.conf" 2>/dev/null; then
+    pass "tmux-gc hooked into .tmux.conf"
+else
+    fail "tmux-gc hook" "no client-attached hook in .tmux.conf; idle sessions will accumulate"
 fi
 
 # ── cron jobs ───────────────────────────────────────────────────────────────
@@ -336,6 +418,16 @@ if $IS_MAC; then
         fi
     else
         skip "tailscale-exit-node launch agent" "$TS_EXIT_PLIST not present"
+    fi
+
+    # brew-autoupdate's background job sudos via this NOPASSWD fragment
+    # (setup.bash renders + installs it). Skip, not fail: it needs sudo to
+    # install, so a --link-only bootstrap legitimately won't have it yet.
+    SUDOERS_FRAGMENT="/etc/sudoers.d/brew-autoupdate"
+    if [[ -f "$SUDOERS_FRAGMENT" ]]; then
+        pass "brew-autoupdate sudoers fragment installed"
+    else
+        skip "brew-autoupdate sudoers" "$SUDOERS_FRAGMENT missing (run setup.bash for unattended brew autoupdate)"
     fi
 
     HOMEBREW_TAILSCALED_PLIST="/Library/LaunchDaemons/homebrew.mxcl.tailscale.plist"
@@ -393,6 +485,20 @@ if $IS_MAC; then
     SHIM=/usr/local/bin/tailscale
     if [[ -e "$SHIM" ]] && ! "$SHIM" version >/dev/null 2>&1; then
         fail "tailscale shim" "$SHIM is broken (App Store Tailscale uninstalled) — sudo rm $SHIM"
+    fi
+
+    # ── iTerm2 ──────────────────────────────────────────────────────────────
+    section "iTerm2"
+    if defaults read com.googlecode.iterm2 >/dev/null 2>&1; then
+        ITERM_PREFS_FOLDER="$(defaults read com.googlecode.iterm2 PrefsCustomFolder 2>/dev/null || true)"
+        ITERM_LOAD_CUSTOM="$(defaults read com.googlecode.iterm2 LoadPrefsFromCustomFolder 2>/dev/null || true)"
+        if [[ "$ITERM_LOAD_CUSTOM" == "1" && "$ITERM_PREFS_FOLDER" == "$DOTFILES_DIR/apps" ]]; then
+            pass "iTerm2 prefs loaded from repo"
+        else
+            fail "iTerm2 prefs" "not loading from $DOTFILES_DIR/apps (run setup.bash, then restart iTerm2)"
+        fi
+    else
+        skip "iTerm2 prefs" "iTerm2 not configured on this machine"
     fi
 fi
 
