@@ -81,5 +81,5 @@ echo "$n" >"{counter}"
 return 0
 """
     result = _run_retry(tmp_path, attempts=0, base=1, body=body)
-    assert result.returncode != 0
+    assert result.returncode == 1
     assert not counter.exists()

@@ -745,10 +745,26 @@ def test_the_proxy_passes_a_non_post_request_through(tmp_path: Path) -> None:
         _kill_proxy(proxy, server)
 
 
-def test_a_malformed_content_length_gets_a_clean_400_not_a_crash(tmp_path: Path) -> None:
-    """A non-numeric content-length used to raise an uncaught ValueError inside the
-    handler (no per-request try/except in BaseHTTPRequestHandler), aborting the
-    connection with a swallowed traceback instead of a clean 400."""
+@pytest.mark.parametrize(
+    "content_length",
+    [
+        pytest.param(
+            b"not-a-number",
+            id="non-numeric — used to raise an uncaught ValueError (no per-request "
+            "try/except in BaseHTTPRequestHandler), aborting the connection instead "
+            "of a clean 400",
+        ),
+        pytest.param(
+            b"-1",
+            id="negative — truthy in Python, so `self.rfile.read(length)` used to "
+            "read until EOF on a keep-alive connection the client never closes, "
+            "hanging the request thread forever instead of rejecting it",
+        ),
+    ],
+)
+def test_a_malformed_content_length_gets_a_clean_400(
+    tmp_path: Path, content_length: bytes
+) -> None:
     import socket
 
     fake_port = _free_port()
@@ -761,40 +777,9 @@ def test_a_malformed_content_length_gets_a_clean_400_not_a_crash(tmp_path: Path)
             sock.sendall(
                 b"POST /v1/messages HTTP/1.1\r\n"
                 b"Host: 127.0.0.1\r\n"
-                b"Content-Length: not-a-number\r\n"
+                b"Content-Length: " + content_length + b"\r\n"
                 b"Connection: close\r\n\r\n"
             )
-            response = b""
-            while True:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                response += chunk
-        assert response.startswith(b"HTTP/1.0 400") or response.startswith(b"HTTP/1.1 400")
-    finally:
-        _kill_proxy(proxy, server)
-
-
-def test_a_negative_content_length_gets_a_clean_400_not_a_hang(tmp_path: Path) -> None:
-    """A negative content-length is truthy, so `self.rfile.read(length)` reads until
-    EOF on a keep-alive connection the client never closes — hanging that request
-    thread forever instead of rejecting the malformed request."""
-    import socket
-
-    fake_port = _free_port()
-    proxy_port = _free_port()
-    server = _fake_anthropic(fake_port, [])
-    proxy = _start_proxy(tmp_path, fake_port, proxy_port, seed=("two",))
-    try:
-        assert _wait_port(proxy_port), "proxy never started listening"
-        with socket.create_connection(("127.0.0.1", proxy_port), timeout=10) as sock:
-            sock.sendall(
-                b"POST /v1/messages HTTP/1.1\r\n"
-                b"Host: 127.0.0.1\r\n"
-                b"Content-Length: -1\r\n"
-                b"Connection: close\r\n\r\n"
-            )
-            sock.settimeout(10)
             response = b""
             while True:
                 chunk = sock.recv(4096)
