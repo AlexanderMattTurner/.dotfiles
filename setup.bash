@@ -210,8 +210,11 @@ if [ "$(uname)" = "Darwin" ]; then
         sed "s/__USERNAME__/$ESCAPED_USER/g" "$SUDOERS_TEMPLATE" >"$SUDOERS_RENDERED"
         # Compare content, not just existence (same pattern as the tailscale
         # plists below): an existence-only guard means a later template edit
-        # never reaches already-provisioned machines.
-        if [ ! -f "$SUDOERS_DEST" ] || ! cmp -s "$SUDOERS_RENDERED" "$SUDOERS_DEST"; then
+        # never reaches already-provisioned machines. The fragment is
+        # root:wheel 0440, unreadable by a plain user, so the comparison
+        # itself needs sudo — a bare `cmp` would fail with "Permission
+        # denied" on every run and force a reinstall regardless of drift.
+        if [ ! -f "$SUDOERS_DEST" ] || ! sudo cmp -s "$SUDOERS_RENDERED" "$SUDOERS_DEST"; then
             if sudo visudo -cf "$SUDOERS_RENDERED" >/dev/null; then
                 sudo install -o root -g wheel -m 0440 "$SUDOERS_RENDERED" "$SUDOERS_DEST"
             else

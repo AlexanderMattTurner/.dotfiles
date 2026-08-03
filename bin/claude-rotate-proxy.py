@@ -42,6 +42,10 @@ UPSTREAM = os.environ.get("CLAUDE_ROTATE_PROXY_UPSTREAM", "https://api.anthropic
 # How many distinct accounts one client request may be replayed across before the
 # proxy returns the last upstream verdict. Bounds a rotation storm.
 MAX_ROTATIONS = 8
+# Caps how much of a client-declared content-length the proxy will buffer in
+# memory. The loopback caller is trusted, but an inflated header shouldn't be
+# able to make the proxy allocate an unbounded read.
+MAX_BODY_SIZE = int(os.environ.get("CLAUDE_ROTATE_PROXY_MAX_BODY_SIZE", 100 * 1024 * 1024))
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 CLAUDE_ACCOUNT = os.environ.get(
@@ -149,10 +153,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("content-length", 0))
+            # Negative is truthy in Python, so an unchecked read(length) would
+            # read until EOF instead of rejecting the malformed request.
+            if length < 0 or length > MAX_BODY_SIZE:
+                raise ValueError
         except ValueError:
-            self._reply_plain(400, b"claude-rotate-proxy: invalid content-length header.\n")
-            return
-        if length < 0:
             self._reply_plain(400, b"claude-rotate-proxy: invalid content-length header.\n")
             return
         body = self.rfile.read(length) if length else b""

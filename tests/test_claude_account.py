@@ -760,6 +760,11 @@ def test_the_proxy_passes_a_non_post_request_through(tmp_path: Path) -> None:
             "read until EOF on a keep-alive connection the client never closes, "
             "hanging the request thread forever instead of rejecting it",
         ),
+        pytest.param(
+            b"999999999999",
+            id="oversized — an inflated header must not make the proxy buffer an "
+            "unbounded read into memory",
+        ),
     ],
 )
 def test_a_malformed_content_length_gets_a_clean_400(
