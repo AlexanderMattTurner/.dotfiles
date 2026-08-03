@@ -24,6 +24,7 @@
     ],
     "defaultMode": "auto"
   },
+  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
@@ -51,7 +52,16 @@
   "enabledPlugins": {
     "code-simplifier@claude-plugins-official": true,
     "plugin-dev@claude-plugins-official": true,
-    "pyright-lsp@claude-plugins-official": true
+    "pyright-lsp@claude-plugins-official": true,
+    "agent-sanitizer@agent-sanitizer": true
+  },
+  "extraKnownMarketplaces": {
+    "agent-sanitizer": {
+      "source": {
+        "source": "github",
+        "repo": "AlexanderMattTurner/agent-sanitizer"
+      }
+    }
   },
   "sandbox": {
     "enabled": true,
@@ -81,8 +91,8 @@
       ]
     }
   },
+  "effortLevel": "medium",
   "theme": "dark-ansi",
   "editorMode": "vim",
-  "skipAutoPermissionPrompt": true,
-  "model": "opus"
+  "skipAutoPermissionPrompt": true
 }
