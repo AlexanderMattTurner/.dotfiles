@@ -25,7 +25,13 @@ function claude --wraps claude --description 'Claude Code via claude-guard, subs
     # non-empty literal and never take this branch.
     set -l subs (claude-account --namespaces 2>/dev/null)
     if test -z "$subs"
-        env VENICE_INFERENCE_KEY=$venice $claude_bin $argv
+        # Export via `set -lx`, not `env VAR=secret cmd`: the external `env`
+        # binary receives VAR=secret as its own argv before it execs into
+        # cmd, so it's briefly visible in `ps`/`/proc/<pid>/cmdline` — the
+        # exact argv exposure CLAUDE.md's secrets rule forbids. `set -lx`
+        # puts it straight into this process's environment instead.
+        set -lx VENICE_INFERENCE_KEY $venice
+        $claude_bin $argv
         return
     end
 
@@ -48,9 +54,14 @@ function claude --wraps claude --description 'Claude Code via claude-guard, subs
     # subscription presentation; the proxy supplies the real token per request. The
     # session process never holds a credential. env -u drops any inherited
     # ANTHROPIC_API_KEY so the sentinel is the top credential.
+    #
+    # VENICE_INFERENCE_KEY is exported via `set -lx` rather than passed on
+    # env's own argv — env is still used for `-u` and the non-secret sentinel
+    # values, but a real secret must never appear in a process's argv (see the
+    # no-rotation branch above for why).
+    set -lx VENICE_INFERENCE_KEY $venice
     env -u ANTHROPIC_API_KEY \
         CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-CLAUDE-ROTATE-PROXY-SENTINEL \
         ANTHROPIC_BASE_URL=http://127.0.0.1:$port \
-        VENICE_INFERENCE_KEY=$venice \
         $claude_bin $argv
 end
