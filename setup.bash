@@ -99,7 +99,14 @@ fi
 
 # Install Homebrew first -- many subsequent steps depend on it
 install_homebrew() {
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
+    # Capture curl's output (and check its exit status) before handing it to
+    # bash -c: `bash -c "$(curl ...)"` discards curl's own exit code, so a
+    # network failure that yields an empty body would otherwise run `bash -c
+    # ""` — which exits 0 — and this function would silently "succeed"
+    # without installing anything, defeating the retry wrapper below.
+    local install_script
+    install_script="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || return 1
+    NONINTERACTIVE=1 /bin/bash -c "$install_script" >/dev/null
 }
 if ! command_exists brew; then
     status_msg "Installing Homebrew..."
@@ -197,14 +204,19 @@ if [ "$(uname)" = "Darwin" ]; then
     # so the background launchd job can run sudo without prompting.
     SUDOERS_TEMPLATE="$DOTFILES_DIR/etc/sudoers.d/brew-autoupdate.template"
     SUDOERS_DEST="/etc/sudoers.d/brew-autoupdate"
-    if [ -f "$SUDOERS_TEMPLATE" ] && [ ! -f "$SUDOERS_DEST" ]; then
+    if [ -f "$SUDOERS_TEMPLATE" ]; then
         SUDOERS_RENDERED="$(mktemp)"
         trap 'rm -f "$SUDOERS_RENDERED"' EXIT
         sed "s/__USERNAME__/$ESCAPED_USER/g" "$SUDOERS_TEMPLATE" >"$SUDOERS_RENDERED"
-        if sudo visudo -cf "$SUDOERS_RENDERED" >/dev/null; then
-            sudo install -o root -g wheel -m 0440 "$SUDOERS_RENDERED" "$SUDOERS_DEST"
-        else
-            status_msg "WARN: rendered sudoers fragment failed validation; skipping install."
+        # Compare content, not just existence (same pattern as the tailscale
+        # plists below): an existence-only guard means a later template edit
+        # never reaches already-provisioned machines.
+        if [ ! -f "$SUDOERS_DEST" ] || ! cmp -s "$SUDOERS_RENDERED" "$SUDOERS_DEST"; then
+            if sudo visudo -cf "$SUDOERS_RENDERED" >/dev/null; then
+                sudo install -o root -g wheel -m 0440 "$SUDOERS_RENDERED" "$SUDOERS_DEST"
+            else
+                status_msg "WARN: rendered sudoers fragment failed validation; skipping install."
+            fi
         fi
         rm -f "$SUDOERS_RENDERED"
         trap - EXIT
