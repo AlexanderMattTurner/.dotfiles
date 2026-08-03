@@ -67,3 +67,19 @@ return 7
     result = _run_retry(tmp_path, attempts=3, base=1, body=body)
     assert result.returncode == 7
     assert counter.read_text().strip() == "3"
+
+
+def test_zero_attempts_reports_failure_without_running_command(tmp_path: Path) -> None:
+    # The for-loop body never runs when attempts<=0, so rc must default to
+    # failure — otherwise the function falsely reports success for a command
+    # it never invoked.
+    counter = tmp_path / "attempts"
+    body = f"""
+n=$(cat "{counter}" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" >"{counter}"
+return 0
+"""
+    result = _run_retry(tmp_path, attempts=0, base=1, body=body)
+    assert result.returncode != 0
+    assert not counter.exists()

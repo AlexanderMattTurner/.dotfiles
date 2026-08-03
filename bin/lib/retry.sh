@@ -11,7 +11,10 @@
 retry() {
     local attempts="$1" base="$2"
     shift 2
-    local attempt rc=0
+    # rc starts at failure, not 0: with attempts<=0 the for-loop body never
+    # runs, and the function must not report false success for a command it
+    # never invoked.
+    local attempt rc=1
     for ((attempt = 1; attempt <= attempts; attempt++)); do
         # `"$@" && return 0` (not `if "$@"; then return 0; fi`): when the
         # then-branch of an if/fi never runs, bash resets $? to 0, so the
