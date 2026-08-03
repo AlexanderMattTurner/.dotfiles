@@ -147,7 +147,14 @@ class Handler(BaseHTTPRequestHandler):
                 400, b"claude-rotate-proxy: chunked request bodies are not supported.\n"
             )
             return
-        length = int(self.headers.get("content-length", 0))
+        try:
+            length = int(self.headers.get("content-length", 0))
+        except ValueError:
+            self._reply_plain(400, b"claude-rotate-proxy: invalid content-length header.\n")
+            return
+        if length < 0:
+            self._reply_plain(400, b"claude-rotate-proxy: invalid content-length header.\n")
+            return
         body = self.rfile.read(length) if length else b""
         # Drop hop-by-hop and the client's own credential headers: the sentinel
         # Authorization it sent is replaced downstream, and any x-api-key would
@@ -330,7 +337,17 @@ def main() -> int:
         # Almost always EADDRINUSE: another proxy already owns the port. A
         # per-machine singleton is the whole point, so exit quietly.
         return 0
-    signal.signal(signal.SIGTERM, lambda *_: server.shutdown())
+    # server.shutdown() blocks until serve_forever()'s loop notices the
+    # shutdown flag and signals back — but a signal handler runs synchronously
+    # on the main thread, which is the same thread serve_forever() runs on.
+    # Calling shutdown() directly from the handler deadlocks: the loop can't
+    # observe the flag until the handler returns, and the handler is blocked
+    # waiting for the loop. Run it on a separate thread instead, same as the
+    # idle-watch shutdown below.
+    signal.signal(
+        signal.SIGTERM,
+        lambda *_: threading.Thread(target=server.shutdown, daemon=True).start(),
+    )
     threading.Thread(target=_idle_watch, args=(server,), daemon=True).start()
     try:
         server.serve_forever()
