@@ -42,6 +42,10 @@ UPSTREAM = os.environ.get("CLAUDE_ROTATE_PROXY_UPSTREAM", "https://api.anthropic
 # How many distinct accounts one client request may be replayed across before the
 # proxy returns the last upstream verdict. Bounds a rotation storm.
 MAX_ROTATIONS = 8
+# Caps how much of a client-declared content-length the proxy will buffer in
+# memory. The loopback caller is trusted, but an inflated header shouldn't be
+# able to make the proxy allocate an unbounded read.
+MAX_BODY_SIZE = int(os.environ.get("CLAUDE_ROTATE_PROXY_MAX_BODY_SIZE", 100 * 1024 * 1024))
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 CLAUDE_ACCOUNT = os.environ.get(
@@ -147,7 +151,15 @@ class Handler(BaseHTTPRequestHandler):
                 400, b"claude-rotate-proxy: chunked request bodies are not supported.\n"
             )
             return
-        length = int(self.headers.get("content-length", 0))
+        try:
+            length = int(self.headers.get("content-length", 0))
+            # Negative is truthy in Python, so an unchecked read(length) would
+            # read until EOF instead of rejecting the malformed request.
+            if length < 0 or length > MAX_BODY_SIZE:
+                raise ValueError
+        except ValueError:
+            self._reply_plain(400, b"claude-rotate-proxy: invalid content-length header.\n")
+            return
         body = self.rfile.read(length) if length else b""
         # Drop hop-by-hop and the client's own credential headers: the sentinel
         # Authorization it sent is replaced downstream, and any x-api-key would
@@ -330,7 +342,17 @@ def main() -> int:
         # Almost always EADDRINUSE: another proxy already owns the port. A
         # per-machine singleton is the whole point, so exit quietly.
         return 0
-    signal.signal(signal.SIGTERM, lambda *_: server.shutdown())
+    # server.shutdown() blocks until serve_forever()'s loop notices the
+    # shutdown flag and signals back — but a signal handler runs synchronously
+    # on the main thread, which is the same thread serve_forever() runs on.
+    # Calling shutdown() directly from the handler deadlocks: the loop can't
+    # observe the flag until the handler returns, and the handler is blocked
+    # waiting for the loop. Run it on a separate thread instead, same as the
+    # idle-watch shutdown below.
+    signal.signal(
+        signal.SIGTERM,
+        lambda *_: threading.Thread(target=server.shutdown, daemon=True).start(),
+    )
     threading.Thread(target=_idle_watch, args=(server,), daemon=True).start()
     try:
         server.serve_forever()
