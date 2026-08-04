@@ -23,10 +23,10 @@ fi
 # `git stash create` writes a commit object WITHOUT touching the tree or the stash
 # stack, pinned in a ref so it survives gc and is one `git checkout` away.
 if ! git diff --quiet; then
-  if _gb_snapshot=$(git stash create 2>/dev/null) && [[ -n "$_gb_snapshot" ]]; then
-    git update-ref refs/gb/precommit-recovery "$_gb_snapshot" 2>/dev/null || true
-    echo "pre-commit: unstaged edits present — saved recovery snapshot $_gb_snapshot (ref refs/gb/precommit-recovery). If this commit fails and your uncommitted edits vanish, restore them with: git checkout $_gb_snapshot -- <path>" >&2
-  fi
+    if _gb_snapshot=$(git stash create 2>/dev/null) && [[ -n "$_gb_snapshot" ]]; then
+        git update-ref refs/gb/precommit-recovery "$_gb_snapshot" 2>/dev/null || true
+        echo "pre-commit: unstaged edits present — saved recovery snapshot $_gb_snapshot (ref refs/gb/precommit-recovery). If this commit fails and your uncommitted edits vanish, restore them with: git checkout $_gb_snapshot -- <path>" >&2
+    fi
 fi
 
 # This repo's lint story is pre-commit, not lint-staged: shellcheck, shfmt,
@@ -34,24 +34,24 @@ fi
 # .pre-commit-config.yaml. It runs BEFORE the package.json early-exit below,
 # which would otherwise skip every one of those gates.
 if command -v pre-commit >/dev/null 2>&1; then
-  pre-commit run --config "$git_root/.pre-commit-config.yaml"
+    pre-commit run --config "$git_root/.pre-commit-config.yaml"
 fi
 
 # No package.json: not a Node project, so there is no lint-staged gate to run.
 if [[ ! -f "$git_root/package.json" ]]; then
-  exit 0
+    exit 0
 fi
 
 # A Node project with lint-staged absent means the gate CANNOT run — fail the
 # commit rather than let it through with zero lint/format enforcement.
 if [[ ! -f "$git_root/node_modules/.bin/lint-staged" ]]; then
-  gate_die_missing_tool pre-commit lint-staged "run 'pnpm install' to provision the lint/format checks, then retry the commit."
+    gate_die_missing_tool pre-commit lint-staged "run 'pnpm install' to provision the lint/format checks, then retry the commit."
 fi
 
 if command -v pnpm >/dev/null 2>&1; then
-  pnpm exec lint-staged --allow-empty
+    pnpm exec lint-staged --allow-empty
 elif command -v npm >/dev/null 2>&1; then
-  npx lint-staged --allow-empty
+    npx lint-staged --allow-empty
 else
-  gate_die_missing_tool pre-commit pnpm "install pnpm (or npm) so lint-staged can run, then retry the commit."
+    gate_die_missing_tool pre-commit pnpm "install pnpm (or npm) so lint-staged can run, then retry the commit."
 fi
