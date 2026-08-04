@@ -71,11 +71,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Respond to @claude
-<<<<<<< local
-        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
-=======
         uses: ./.github/actions/claude-run
->>>>>>> template
         with:
           oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           fallback_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_FALLBACK }}
