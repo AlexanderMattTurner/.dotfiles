@@ -106,11 +106,14 @@ repos:
         language: script
         files: \.sh$
         # bin/lib/: sourced libraries, no shebang to check anyway.
-        # .github/scripts/, .hooks/lint-skills.sh: populated verbatim by
+        # .github/, .hooks/, .claude/hooks/: populated verbatim by
         # template-sync from claude-automation-template, which names its own
         # bash scripts *.sh — renaming them here would just have next week's
         # sync recreate the .sh originals alongside the renamed .bash copies.
-        exclude: ^(bin/lib/|\.github/scripts/|\.hooks/lint-skills\.sh$)
+        # The sync in 9a2abed widened this from .github/scripts/ and
+        # .hooks/lint-skills.sh to whole trees (lib-gate.sh, notify-ntfy.sh,
+        # and the .claude/hooks/ set), which blocked every push until listed.
+        exclude: ^(bin/lib/|\.github/|\.hooks/|\.claude/hooks/)
 
       - id: lint-skills
         name: validate Claude Code skill structure
