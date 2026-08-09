@@ -28,7 +28,11 @@ jobs:
       # skip-on-missing to fail-on-missing for both pre-commit passes below.
       GITLEAKS_REQUIRED: "1"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      # persist-credentials must stay on: the auto-fix step below commits and
+      # pushes the `style:` fixup back to this branch, which needs the stored
+      # credential. Nothing here uploads an artifact, so there is no path for
+      # the credential to leak.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1 # zizmor: ignore[artipacked]
         with:
           ref: ${{ github.head_ref || github.ref_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
