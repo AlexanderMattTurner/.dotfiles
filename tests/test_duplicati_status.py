@@ -55,9 +55,13 @@ def _make_server_db(path: Path, job_db_paths: list[Path]) -> None:
     conn.close()
 
 
-def _run_lib(snippet: str, extra_env: dict[str, str] | None = None) -> str:
+def _run_lib(
+    snippet: str,
+    extra_env: dict[str, str] | None = None,
+    args: list[str] | None = None,
+) -> str:
     proc = subprocess.run(
-        ["bash", "-c", f'source "{STATUS_SH}" && {snippet}'],
+        ["bash", "-c", f'source "{STATUS_SH}" && {snippet}', "_", *(args or [])],
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
@@ -209,9 +213,7 @@ def test_reading_health_writes_nothing(tmp_path: Path) -> None:
 
 
 def _dataless_count(roots: list[Path]) -> str:
-    return _run_lib(
-        'duplicati_dataless_count "$@"' + " " + " ".join(f"'{r}'" for r in roots)
-    )
+    return _run_lib('duplicati_dataless_count "$@"', args=[str(r) for r in roots])
 
 
 def test_dataless_count_ignores_ordinary_local_files(tmp_path: Path) -> None:

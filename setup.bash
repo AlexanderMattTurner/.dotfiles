@@ -314,7 +314,13 @@ if [ "$(uname)" = "Darwin" ]; then
     # to keep the ccr agent out of.
     DUPLICATI_PLIST_DEST="$HOME/Library/LaunchAgents/com.duplicati.server.plist"
     if [ -d "/Applications/Duplicati.app" ]; then
-        mkdir -p "$HOME/Library/LaunchAgents" /Users/Shared/Duplicati/log
+        # launchd refuses to start an agent whose StandardOutPath directory
+        # is missing. Non-fatal: a locked-down /Users/Shared must not abort
+        # the whole installer before it reaches its closing doctor summary.
+        mkdir -p "$HOME/Library/LaunchAgents" ||
+            status_msg "WARN: could not create ~/Library/LaunchAgents"
+        mkdir -p /Users/Shared/Duplicati/log ||
+            status_msg "WARN: could not create /Users/Shared/Duplicati/log — Duplicati agent may not start"
         safe_link "$DOTFILES_DIR/launchagents/com.duplicati.server.plist" "$DUPLICATI_PLIST_DEST"
         # Bootstrap only when it isn't already loaded. Unlike the ccr agent,
         # a bootout/bootstrap cycle here would abort a backup that happens to
