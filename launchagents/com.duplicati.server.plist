@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.duplicati.server</string>
+
+    <!-- The offsite backup runs on this server's own daily schedule, so it
+         must be up whenever the machine is. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- envchain supplies Duplicati's settings-encryption key from the
+         Keychain, which is what decrypts the enc-v1 target URL (and its
+         embedded remote credentials) in the server database. Without the
+         wrapper the server starts but cannot reach the remote.
+
+         No paths here are user-specific, so this is a plain plist rather than
+         a __USERNAME__ template: setup.bash symlinks it directly. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/envchain</string>
+        <string>duplicati</string>
+        <string>/Applications/Duplicati.app/Contents/MacOS/duplicati-server</string>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/Shared/Duplicati/log/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/Shared/Duplicati/log/launchd_stderr.log</string>
+</dict>
+</plist>

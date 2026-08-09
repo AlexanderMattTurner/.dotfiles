@@ -303,6 +303,30 @@ if [ "$(uname)" = "Darwin" ]; then
     launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
 
+    # Duplicati: the daily offsite backup. Its LaunchAgent is tracked here
+    # rather than living only in ~/Library/LaunchAgents so a rebuilt machine
+    # starts backing up again without anyone remembering to hand-write the
+    # plist. It went unmanaged — and unchecked by doctor — long enough that
+    # "are we backing up?" could only be answered by opening the web UI.
+    #
+    # Guarded on the app being present: KeepAlive would otherwise respawn a
+    # missing binary in a tight loop, the same trap bin/setup_llm.bash exists
+    # to keep the ccr agent out of.
+    DUPLICATI_PLIST_DEST="$HOME/Library/LaunchAgents/com.duplicati.server.plist"
+    if [ -d "/Applications/Duplicati.app" ]; then
+        mkdir -p "$HOME/Library/LaunchAgents" /Users/Shared/Duplicati/log
+        safe_link "$DOTFILES_DIR/launchagents/com.duplicati.server.plist" "$DUPLICATI_PLIST_DEST"
+        # Bootstrap only when it isn't already loaded. Unlike the ccr agent,
+        # a bootout/bootstrap cycle here would abort a backup that happens to
+        # be mid-flight, and re-running setup.bash must never cost a day of
+        # backup coverage.
+        if ! launchctl print "gui/$(id -u)/com.duplicati.server" >/dev/null 2>&1; then
+            launchctl bootstrap "gui/$(id -u)" "$DUPLICATI_PLIST_DEST" 2>/dev/null || true
+        fi
+    else
+        status_msg "WARN: Duplicati.app missing — no offsite backups (brew install --cask duplicati)"
+    fi
+
     # Install wally-cli for keyboard flashing. Non-fatal: doctor reports it
     # as an optional skip, so a flaky download must not abort setup here.
     if ! command_exists wally-cli && command_exists go; then

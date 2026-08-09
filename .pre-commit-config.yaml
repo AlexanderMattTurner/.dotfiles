@@ -144,6 +144,15 @@ repos:
         # Only re-run when the linker or its tests change.
         files: ^(bin/lib/safe_link\.sh|tests/test_safe_link\.py)$
 
+      - id: duplicati-status-tests
+        name: pytest tests/test_duplicati_status.py
+        # Backup health is the one signal with no natural feedback: nobody
+        # notices a broken classifier until a restore.
+        entry: pytest -q tests/test_duplicati_status.py
+        language: system
+        pass_filenames: false
+        files: ^(bin/lib/duplicati-status\.sh|tests/test_duplicati_status\.py)$
+
       - id: security-argv-tests
         name: pytest tests/test_security_argv.py
         # Regression guard: secrets (Keychain values, BW_SESSION) must not

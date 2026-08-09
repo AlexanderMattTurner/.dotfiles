@@ -487,6 +487,70 @@ if $IS_MAC; then
         fail "tailscale shim" "$SHIM is broken (App Store Tailscale uninstalled) — sudo rm $SHIM"
     fi
 
+    # ── Backups ─────────────────────────────────────────────────────────────
+    # Duplicati is the only offsite copy of this machine. Every check here
+    # exists because a backup that has silently stopped looks exactly like one
+    # that is working: the agent stays "running", the schedule keeps advancing,
+    # and nothing complains until a restore is needed.
+    section "Backups"
+
+    if [[ ! -d /Applications/Duplicati.app ]]; then
+        skip "Duplicati backups" "Duplicati.app not installed (brew install --cask duplicati)"
+    else
+        DUPLICATI_PLIST="$HOME/Library/LaunchAgents/com.duplicati.server.plist"
+        if [[ -L "$DUPLICATI_PLIST" ]]; then
+            # launchctl list omits agents in some session contexts; print is
+            # authoritative for a specific label.
+            if launchctl print "gui/$(id -u)/com.duplicati.server" >/dev/null 2>&1; then
+                pass "Duplicati launch agent loaded"
+            else
+                fail "Duplicati launch agent" "plist symlinked but not loaded (run: launchctl bootstrap gui/$(id -u) $DUPLICATI_PLIST)"
+            fi
+        else
+            fail "Duplicati launch agent" "$DUPLICATI_PLIST is not the repo symlink (run setup.bash)"
+        fi
+
+        # shellcheck source=lib/duplicati-status.sh disable=SC1091
+        source "$DOTFILES_DIR/bin/lib/duplicati-status.sh"
+        DUPLICATI_STATE="$(duplicati_health)"
+        case "$DUPLICATI_STATE" in
+        ok:*)
+            pass "Duplicati last backup ${DUPLICATI_STATE#ok:}d ago"
+            ;;
+        stale:*)
+            fail "Duplicati backups stale" \
+                "newest backup is ${DUPLICATI_STATE#stale:}d old (>${DUPLICATI_STALE_DAYS}d) — open http://localhost:8200 and check the job"
+            ;;
+        never)
+            fail "Duplicati backups" "a job is configured but has never completed a run"
+            ;;
+        no-jobs)
+            fail "Duplicati backups" "server is running but no backup job is configured"
+            ;;
+        no-db)
+            fail "Duplicati backups" "no server database — Duplicati has never been configured"
+            ;;
+        no-sqlite)
+            skip "Duplicati backups" "sqlite3 unavailable, cannot read backup history"
+            ;;
+        *)
+            fail "Duplicati backups" "unrecognized health state '$DUPLICATI_STATE'"
+            ;;
+        esac
+
+        # iCloud-evicted files are the one way this backup loses data while
+        # still reporting success: Duplicati cannot materialize a dataless
+        # placeholder, so it logs "Excluding path due to file locked" and the
+        # file lands in no backup version at all.
+        DATALESS="$(duplicati_dataless_count)"
+        if [[ "$DATALESS" -eq 0 ]]; then
+            pass "no iCloud-evicted files in backup sources"
+        else
+            fail "iCloud-evicted files excluded from backups" \
+                "$DATALESS dataless file(s) under ~/Documents and ~/Desktop are skipped by every run — turn off System Settings > [Apple ID] > iCloud > iCloud Drive > Optimize Mac Storage, or run: find ~/Documents ~/Desktop -flags +dataless -print0 | xargs -0 brctl download"
+        fi
+    fi
+
     # ── iTerm2 ──────────────────────────────────────────────────────────────
     section "iTerm2"
     if defaults read com.googlecode.iterm2 >/dev/null 2>&1; then

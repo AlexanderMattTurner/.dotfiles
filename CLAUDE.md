@@ -213,7 +213,11 @@ skip-on-missing to fail-on-missing).
   login). Don't add a third secrets layer.
 - Namespaces consumed by wrappers, so you know what to seed: `ai`
   (`VENICE_INFERENCE_KEY`, `ANTHROPIC_API_KEY`), `npm`, `cloudflare`,
-  `pypi`, and one per Claude subscription for `bin/claude-account.bash`
+  `pypi`, `duplicati` (the settings-encryption key that decrypts the
+  `enc-v1:` target URL, and with it the remote credentials, in Duplicati's
+  server database — the LaunchAgent runs the server under `envchain
+  duplicati` for exactly this), and one per Claude subscription for
+  `bin/claude-account.bash`
   (any name; it scans every namespace holding a
   `CLAUDE_CODE_OAUTH_TOKEN`, or the ordered list in
   `CLAUDE_ACCOUNT_NAMESPACES`). Seed a Claude account with `claude
@@ -315,6 +319,47 @@ Code's permission prompts (no `--dangerously-skip-permissions`).
   match Venice's `/v1/models` and rotate, so treat these as examples, not
   a frozen list). The `mods` fish function wraps invocations in
   `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the Keychain.
+
+### Backups
+
+Duplicati is the only offsite copy of this machine, and it is the one
+subsystem here whose failures are all silent. Nothing about a dead backup
+looks different from a live one: the LaunchAgent stays `running`,
+`Schedule.LastRun` advances on every *trigger* whether or not the run
+succeeded, and a run that skips thousands of files still ends `Success`.
+This went unmanaged for months — the plist existed only in
+`~/Library/LaunchAgents`, `doctor.bash` checked nothing, and "are we backing
+up?" could only be answered by opening the web UI.
+
+- `launchagents/com.duplicati.server.plist` is the tracked plist,
+  symlinked by `setup.bash` and removed by `uninstall.bash`. It has no
+  user-specific paths, so it is a plain plist, not a `__USERNAME__`
+  template. `setup.bash` bootstraps it **only when it isn't already
+  loaded**: a bootout/bootstrap cycle on every run would abort a backup
+  that happened to be mid-flight.
+- `bin/lib/duplicati-status.sh` is the single classifier
+  (`ok:<days>` / `stale:<days>` / `never` / `no-jobs` / `no-db` /
+  `no-sqlite`). Freshness comes from the newest `Fileset` row in each job's
+  own database, because that is the only record that proves a backup
+  *landed*. Every read uses `immutable=1` so doctor takes no sqlite locks
+  on a live multi-GB database — it can under-report freshness, never
+  over-report it. Adding a failure mode = new state here + a case in
+  `bin/doctor.bash` + a case in `tests/test_duplicati_status.py`.
+- **iCloud-evicted files are excluded from every backup.** Duplicati cannot
+  materialize a dataless placeholder, so it logs `Excluding path due to
+  file locked ... Resource deadlock avoided` and the file lands in no
+  backup version — iCloud becomes its only copy. This is why doctor FAILs
+  on a non-zero `duplicati_dataless_count`; as of 2026-08-09 there were
+  6,291 such files under `~/Documents` and `~/Desktop`, which is what the
+  ~4,214 warnings on each daily run were. The fix is to stop evicting
+  (turn off iCloud Drive's "Optimize Mac Storage"), not to silence the
+  warning.
+- Duplicati's data lives in `~/Library/Application Support/Duplicati`.
+  Do **not** resurrect the old `sudo duplicati-server` pattern (removed in
+  `a877cef`): it left `~/.duplicati` and `/Users/Shared/Duplicati/data`
+  owned by `root:wheel 700`, which the user-owned server can't read, and
+  `~/.duplicati` sits inside the `%HOME%` backup source so it warns on
+  every run.
 
 ### Cross-platform
 
