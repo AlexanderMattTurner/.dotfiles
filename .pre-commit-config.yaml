@@ -34,7 +34,12 @@ repos:
     hooks:
       - id: shellcheck
         name: shellcheck (scripts)
-        args: [-e, SC2016]
+        # -x follows `source`d files instead of reporting SC1091 on each one.
+        # The 9a2abed template sync added .hooks/lib-gate.sh and made
+        # .hooks/{pre-commit,commit-msg} source it, which failed this hook on
+        # every push. Following the source is the stronger fix than excluding
+        # SC1091: the library's own contents get checked at each call site.
+        args: [-x, -e, SC2016]
         files: ^(setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash)|\.claude/hooks/.*\.bash|\.devcontainer/.*\.bash)$
       - id: shellcheck
         name: shellcheck (.bashrc)
