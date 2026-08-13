@@ -239,6 +239,11 @@ set -gx SHELL (status fish-path)
 # tracking and the event is dropped, so the pane looks unscrollable.
 set -gx LESS '-R --mouse --wheel-lines=3'
 
+# 1h prompt-cache TTL instead of the 5min default: avoids paying full-context
+# cache-write cost on every message after brief inactivity (e.g. cronjob-driven
+# sessions checking on long-running experiments).
+set -gx ENABLE_PROMPT_CACHING_1H 1
+
 abbr -a n nvim
 
 # Trash-cli aliases 
