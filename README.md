@@ -67,7 +67,9 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
 
 14. macOS [`SlowQuit`](https://github.com/dudukee/SlowQuit) delays ⌘Q so a stray keystroke doesn't spell doom. Avoids much frustration!
 
-15. Most importantly, the `goosesay` command. A variant on the classic `cowsay` (which renders text inside a cow's speech bubble), `goosesay` goosens up your terminal just the right amount. For example:
+15. macOS offsite backups via [Duplicati](https://duplicati.com), supervised by launchd (`launchagents/com.duplicati.server.plist`, run under `envchain duplicati` so the encrypted remote credentials never touch a config file). `doctor.bash` answers "are we actually backing up?" rather than "is the process alive?" — it reads the newest completed backup version out of Duplicati's own database and fails when that goes stale, because a dead backup and a healthy one look identical from the outside. It also fails when iCloud has evicted files from the backup sources: Duplicati cannot read a dataless placeholder, so it skips the file, reports success anyway, and leaves iCloud as that file's only copy.
+
+16. Most importantly, the `goosesay` command. A variant on the classic `cowsay` (which renders text inside a cow's speech bubble), `goosesay` goosens up your terminal just the right amount. For example:
 
 ```plaintext
 echo "Never gonna give you up" | goosesay

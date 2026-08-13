@@ -17,5 +17,10 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Wait a week before proposing a new release. A compromised action is
+    # usually caught and yanked within days, and dependabot-auto-merge.yaml
+    # merges these without a human reading the diff.
+    cooldown:
+      default-days: 7
     allow:
       - dependency-name: anthropics/claude-code-action

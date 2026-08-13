@@ -85,7 +85,7 @@
     "deepsource",
     "pnpm exec playwright",
     "chmod +x",
-    "/opt/homebrew/anaconda3/envs/website/bin/ots",
+    "/Users/turntrout/.local/bin/ots",
     "git add",
     "git commit",
     "readlink",

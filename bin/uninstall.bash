@@ -98,6 +98,27 @@ if $IS_MAC; then
         esac
     fi
 
+    # Removing this stops the daily offsite backup, so the prompt says so
+    # outright — it is the one agent here whose absence loses data rather
+    # than just convenience. --yes still removes it, matching every other
+    # entry: uninstall means uninstall.
+    DUPLICATI_PLIST="$HOME/Library/LaunchAgents/com.duplicati.server.plist"
+    if [[ -L "$DUPLICATI_PLIST" ]]; then
+        if $ASSUME_YES; then
+            choice=y
+        else
+            read -rp "Unload + remove the Duplicati launch agent? THIS STOPS DAILY OFFSITE BACKUPS. (y/N) " choice
+        fi
+        case "$choice" in
+        y | Y)
+            launchctl bootout "gui/$(id -u)" "$DUPLICATI_PLIST" 2>/dev/null || true
+            remove_dotfile_symlink "$DUPLICATI_PLIST" \
+                "$DOTFILES_DIR/launchagents/com.duplicati.server.plist"
+            ;;
+        *) echo "  skip Duplicati launch agent" ;;
+        esac
+    fi
+
     TAILSCALED_PLIST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
     if [[ -f "$TAILSCALED_PLIST" ]]; then
         if $ASSUME_YES; then
