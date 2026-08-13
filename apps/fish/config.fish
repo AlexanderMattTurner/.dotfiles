@@ -231,18 +231,15 @@ function push
 end
 
 fish_add_path ~/bin ~/.local/bin /usr/local/go/bin
-set -gx EDITOR nvim
 set -gx SHELL (status fish-path)
 
-# less draws on the alternate screen, where tmux forwards the wheel to the app
-# rather than opening copy-mode. Without --mouse, less requests no mouse
-# tracking and the event is dropped, so the pane looks unscrollable.
-set -gx LESS '-R --mouse --wheel-lines=3'
-
-# 1h prompt-cache TTL instead of the 5min default: avoids paying full-context
-# cache-write cost on every message after brief inactivity (e.g. cronjob-driven
-# sessions checking on long-running experiments).
-set -gx ENABLE_PROMPT_CACHING_1H 1
+# SSOT for vars also exported by ../../.bashrc — see apps/shared/exported-env.sh
+# for the format and why a var does/doesn't belong there.
+for _line in (string match -rv '^\s*(#|$)' -- (cat $DOTFILES_DIR/apps/shared/exported-env.sh))
+    set -l _kv (string split -m 1 '=' -- $_line)
+    set -gx $_kv[1] $_kv[2]
+end
+set -e _line _kv
 
 abbr -a n nvim
 

@@ -23,7 +23,16 @@ fi
 # pnpm-installed claude (the shim's whole job is to relaunch in the
 # devcontainer, which a brew-installed claude can't do).
 export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
-export EDITOR='nvim'
+
+# SSOT for vars also exported by apps/fish/config.fish — see
+# apps/shared/exported-env.sh for the format and why a var does/doesn't
+# belong there.
+_dotfiles_bashrc_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+while IFS='=' read -r _key _val; do
+    case "$_key" in '' | '#'*) continue ;; esac
+    export "${_key?}=${_val?}"
+done <"$_dotfiles_bashrc_dir/apps/shared/exported-env.sh"
+unset _dotfiles_bashrc_dir _key _val
 
 # Hand off to fish for interactive sessions.
 # If the user explicitly typed 'bash', $SHELL is already fish, so we stay in bash.
