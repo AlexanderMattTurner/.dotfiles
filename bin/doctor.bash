@@ -144,7 +144,7 @@ esac
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
 
-for cmd in git fish nvim tmux brew zoxide gh fzf rg fd bat eza delta tokei dust btm mise carapace shfmt mods gitleaks pre-commit uv; do
+for cmd in git fish nvim tmux brew zoxide gh fzf rg fd bat eza delta tokei dust btm mise carapace shfmt mods gitleaks pre-commit uv mosh fish-lsp; do
     check_command "$cmd"
 done
 
