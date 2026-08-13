@@ -91,6 +91,7 @@
       ]
     }
   },
+  "effortLevel": "medium",
   "theme": "dark-ansi",
   "editorMode": "vim",
   "skipAutoPermissionPrompt": true
