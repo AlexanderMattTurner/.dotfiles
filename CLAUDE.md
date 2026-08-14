@@ -422,6 +422,22 @@ a notification + non-zero exit rather than pretending success. The
 detector reads SC state, *not* `route get default`, which reports
 success off stale utun / OrbStack `!` reject routes while offline.
 
+**A single sample at t=0 does not detect the blackhole.** `tailscale
+set` returns once the daemon has *accepted* the pref change, not once
+macOS has rebuilt its routing table, so the doomed pre-teardown route is
+still in SC state for a second or two afterwards — a probe fired
+immediately reads it, calls the disconnect clean, and exits before the
+drop it exists to catch. That is the false-clean `off → off` in
+`menu.log` at 2026-08-09T21:34Z: no bounce, no warning, no internet
+until a reboot. `route_stable_for N` therefore requires N consecutive
+1s samples, and `restore_default_route` spans the teardown window before
+believing the route survived it; a drop that tailscaled re-elects out of
+on its own is logged and costs no Wi-Fi bounce. Both `sc_*` readers
+consume scutil's output to the end rather than `awk … exit`-ing on the
+first match — under `set -o pipefail` an early exit SIGPIPEs scutil, and
+`sc_primary_interface`'s result is assigned directly, so `set -e` would
+abort the disconnect mid-run.
+
 A separate, milder hazard: `brew upgrade tailscale` swaps the CLI binary
 but leaves the *old* `tailscaled` running (version skew). This is *not*
 the blackhole cause but is real drift. `tailscale_version_skew` in
@@ -461,6 +477,16 @@ every consumer + a case in `tests/test_tailscale_health.py`. The
 set-exit-node exit-code/stderr/menu.log contract is locked by
 `tests/test_set_exit_node.py` (which self-skips when a real tailscale
 CLI is installed, so it can never drive an actual VPN).
+
+That file also covers the blackhole self-heal, which is otherwise dead
+code in CI: `pytest tests/` runs on `ubuntu-latest` only, where
+`$IS_MAC` is false and `restore_default_route` never executes. It stubs
+`uname`, `scutil`, `networksetup`, and `sleep` onto `PATH` — `uname`
+reporting Darwin is what opens the branch, and the no-op `sleep` is what
+keeps the sample windows off the wall clock. When adding a case, drive
+the route state through the stub sequence (or `recover_on_bounce`)
+rather than counting poll iterations; assertions pinned to loop counts
+decay into no-ops the moment the timings are retuned.
 
 ## Conventions
 
