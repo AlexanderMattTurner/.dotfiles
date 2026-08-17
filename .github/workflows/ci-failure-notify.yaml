@@ -21,8 +21,10 @@ on: # zizmor: ignore[dangerous-triggers]
       - Claude reviewer-hold sweeper
       - Format check
       - Hook lifecycle
+      - Idempotency
       - Lint
       - PR meta (privileged)
+      - Uninstall round-trip
       - Weekly Security & Dependency Remediation
       - Sync required status checks
       - Sync from Template

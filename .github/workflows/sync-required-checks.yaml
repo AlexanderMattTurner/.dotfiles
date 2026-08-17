@@ -14,7 +14,12 @@ name: Sync required status checks
 # if it is absent. Not a required check itself (no pull_request trigger).
 on:
   push:
-    branches: [main]
+    # This repo's default branch is `master`, not `main` (the template's
+    # assumption) — `main`-only left this workflow permanently unfireable by
+    # a normal merge here, so the ruleset it maintains never self-heals from
+    # required-check annotations removed from the tree. See the deleted-
+    # workflow cleanup in template-sync.yaml's EXCLUDE_PATHS history.
+    branches: [main, master]
     paths:
       - .github/workflows/**
       - .pre-commit-config.yaml
