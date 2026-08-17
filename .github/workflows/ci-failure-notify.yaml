@@ -8,7 +8,10 @@ name: CI failure notify
 # `workflow_run` has no wildcard, so `workflows:` below must name every
 # workflow in this repo with a `push:` or `schedule:` trigger (matched by the
 # workflow's `name:`). A ci-truth-serum hook (check-failure-notifier-coverage)
-# keeps this list in sync with the tree.
+# is supposed to keep this list in sync with the tree, but no such hook is
+# wired into this repo's .pre-commit-config.yaml — which is exactly how this
+# list drifted (missing Idempotency/Uninstall round-trip until an audit
+# caught it). Treat this list as hand-maintained until that hook exists here.
 # The dangerous-triggers finding targets workflows that check out or execute
 # the triggering ref's code with write credentials; this one checks out only
 # the default branch (credential-less) and gates on default-branch runs.
