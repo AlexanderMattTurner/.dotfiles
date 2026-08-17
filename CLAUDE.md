@@ -29,6 +29,8 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
     `MONITOR_DISABLED=1`.
   - `hooks/notify.bash` — cross-platform desktop notification for the
     Notification lifecycle hook.
+  - `hooks/statusline.bash` — shows model, branch, context usage, and
+    session cost in the Claude Code status line.
   - `bin/claude-private`, `bin/claude-paranoid` — claude-code wrappers
     that route through ccr to Venice. `claude-private` defaults to
     Venice's `default_code` model and escalates to `claude-opus-4-7`

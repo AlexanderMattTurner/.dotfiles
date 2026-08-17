@@ -270,12 +270,17 @@ section "Secrets"
 # Rust bw is intentionally never used from scripts.
 bw_cmd="${BW_CMD:-bw-node}"
 if command -v "$bw_cmd" >/dev/null 2>&1; then
-    if "$bw_cmd" --version 2>/dev/null | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+    # Captured to a var, not piped into `grep -q`: under `pipefail`, grep
+    # exiting early on a match can SIGPIPE-kill a still-writing upstream,
+    # turning that 141 into the pipeline's reported exit status.
+    bw_version_out="$("$bw_cmd" --version 2>/dev/null)"
+    if [[ "$bw_version_out" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
         pass "bw-node usable ($bw_cmd)"
     else
         fail "bw-node" "$bw_cmd doesn't respond to --version (install: pnpm install -g @bitwarden/cli)"
     fi
-    if "$bw_cmd" status --raw 2>/dev/null | grep -qE '"status":"(locked|unlocked)"'; then
+    bw_status_out="$("$bw_cmd" status --raw 2>/dev/null)"
+    if [[ "$bw_status_out" =~ \"status\":\"(locked|unlocked)\" ]]; then
         pass "bw is logged in ($bw_cmd)"
     else
         fail "bw login" "not logged in (run: bash bin/bw-login.bash)"
@@ -386,7 +391,8 @@ fi
 section "cron"
 
 if command -v crontab >/dev/null 2>&1 && command -v trash-empty >/dev/null 2>&1; then
-    if crontab -l 2>/dev/null | grep -q "trash-empty"; then
+    crontab_out="$(crontab -l 2>/dev/null)"
+    if [[ "$crontab_out" == *"trash-empty"* ]]; then
         pass "trash-empty cron job"
     else
         fail "trash-empty cron" "not scheduled (run setup.bash)"
@@ -400,7 +406,11 @@ if $IS_MAC; then
     section "launchd agents"
     CCR_PLIST="$HOME/Library/LaunchAgents/com.turntrout.ccr.plist"
     if [[ -L "$CCR_PLIST" ]]; then
-        if launchctl list 2>/dev/null | grep -q com.turntrout.ccr; then
+        # `launchctl list` can be hundreds of lines; captured to a var so a
+        # `grep -q` match doesn't SIGPIPE the still-writing upstream (see the
+        # bw-node checks above for the same fix).
+        launchd_list_out="$(launchctl list 2>/dev/null)"
+        if [[ "$launchd_list_out" == *com.turntrout.ccr* ]]; then
             pass "ccr launch agent loaded"
         else
             fail "ccr launch agent" "plist symlinked but not loaded (run: launchctl bootstrap gui/$(id -u) $CCR_PLIST)"
@@ -411,7 +421,8 @@ if $IS_MAC; then
 
     TS_EXIT_PLIST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
     if [[ -f "$TS_EXIT_PLIST" ]]; then
-        if launchctl list 2>/dev/null | grep -q com.turntrout.tailscale-exit-node; then
+        launchd_list_out="$(launchctl list 2>/dev/null)"
+        if [[ "$launchd_list_out" == *com.turntrout.tailscale-exit-node* ]]; then
             pass "tailscale-exit-node launch agent loaded"
         else
             fail "tailscale-exit-node launch agent" "plist installed but not loaded (run: launchctl bootstrap gui/$(id -u) $TS_EXIT_PLIST)"

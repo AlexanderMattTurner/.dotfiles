@@ -166,7 +166,11 @@ fi
 
 # Remove trash-empty cron job if present
 if command -v crontab >/dev/null 2>&1; then
-    if crontab -l 2>/dev/null | grep -q "trash-empty"; then
+    # Captured to a var rather than `crontab -l | grep -q`: under `pipefail`,
+    # grep matching early can SIGPIPE-kill a still-writing crontab -l, turning
+    # that 141 into the pipeline's reported (failure) exit status.
+    crontab_out="$(crontab -l 2>/dev/null)"
+    if [[ "$crontab_out" == *"trash-empty"* ]]; then
         # grep -v exits 1 when trash-empty was the only line; || true keeps the
         # remaining (possibly empty) crontab flowing into `crontab -`.
         if { crontab -l 2>/dev/null | grep -v "trash-empty" || true; } | crontab -; then

@@ -157,7 +157,11 @@ if command_exists bw-node && [ -t 0 ]; then
     # `bw status` exits 0 with JSON containing status: "unauthenticated" |
     # "locked" | "unlocked". We grep for the logged-in markers; absence ==
     # not logged in (the safe default that triggers the bootstrap prompt).
-    if ! bw-node status --raw 2>/dev/null | grep -qE '"status":"(locked|unlocked)"'; then
+    # Captured to a var rather than piped into `grep -q`: under `pipefail`, a
+    # grep match can SIGPIPE-kill a still-writing upstream and turn that 141
+    # into the pipeline's reported exit status.
+    bw_status_out="$(bw-node status --raw 2>/dev/null)"
+    if [[ ! "$bw_status_out" =~ \"status\":\"(locked|unlocked)\" ]]; then
         status_msg "Bitwarden CLI not logged in."
         read -rp "Run bw login bootstrap now? (y/N) " choice
         case "$choice" in

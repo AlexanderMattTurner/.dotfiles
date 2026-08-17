@@ -93,7 +93,14 @@ case "$target" in
 off | "") host="" ;;
 *) host="$(tailscale_node_lookup "$target" | awk '{print $2}')" ||
     {
-        die "invalid target '$target' (valid: off ${TAILSCALE_EXIT_NODES[*]%% *})"
+        # `${TAILSCALE_EXIT_NODES[*]%% *}` would join the whole array with
+        # spaces first, then strip everything after the *first* space,
+        # leaving only the first code — collect each row's code separately.
+        valid_codes=""
+        for row in "${TAILSCALE_EXIT_NODES[@]}"; do
+            valid_codes+="${row%% *} "
+        done
+        die "invalid target '$target' (valid: off ${valid_codes% })"
         exit 2
     } ;;
 esac
