@@ -274,7 +274,10 @@ if command -v "$bw_cmd" >/dev/null 2>&1; then
     # exiting early on a match can SIGPIPE-kill a still-writing upstream,
     # turning that 141 into the pipeline's reported exit status.
     bw_version_out="$("$bw_cmd" --version 2>/dev/null)"
-    if [[ "$bw_version_out" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    # No `^` anchor: bash regex anchors to the whole captured string, not
+    # per-line like grep — an anchored match would spuriously FAIL if
+    # --version ever printed a leading banner/notice line before the version.
+    if [[ "$bw_version_out" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]; then
         pass "bw-node usable ($bw_cmd)"
     else
         fail "bw-node" "$bw_cmd doesn't respond to --version (install: pnpm install -g @bitwarden/cli)"

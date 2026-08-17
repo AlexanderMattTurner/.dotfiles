@@ -62,6 +62,10 @@ env:
   # check that can never do anything (this repo has no package.json). Their
   # only script dependents (script-configured.sh, script-configured-output.sh,
   # gitleaks-scan.sh) are excluded alongside them, verified unused elsewhere.
+  # markdownlint-orphan-table-row.mjs is NOT excluded despite lint.yaml never
+  # having run markdownlint here (no package.json, so its `pnpm lint` step
+  # never fired) — it's the vscodium custom-rule source
+  # (apps/vscodium/settings.json), not a lint.yaml dependent.
   # format-check.yaml stays synced: its symlink-portability check
   # (.github/scripts/check-symlinks.sh) is real, dotfiles-specific value with
   # no local equivalent, even though its `pnpm format --check` step no-ops.
@@ -76,9 +80,15 @@ env:
   # package), which version-bump.sh treats as unreadable rather than private and
   # fails LOUD on rather than skipping — auto-version.yaml failed on every push
   # to master, and release-canary.yaml (which cross-checks that release
-  # pipeline) failed every day, both pure noise. release-canary.sh and
-  # promote-changelog.mjs are excluded alongside them, verified unused
-  # elsewhere; .github/scripts/lib/retry.bash is NOT excluded despite being
+  # pipeline) failed every day, both pure noise. release-canary.sh,
+  # promote-changelog.mjs, and their test/helper-only dependents
+  # (version-bump.test.mjs, npm-max-stable.mjs, npm-max-stable.test.mjs —
+  # npm-max-stable.mjs is release-canary.sh's own max-stable-version helper,
+  # per its header comment) are excluded alongside them, verified unused
+  # elsewhere. build-publish-notify.yaml is excluded too: its workflow_run
+  # trigger names only "Auto version bump and publish" and "Release canary",
+  # so without them it can never fire — dead config, not a live check.
+  # .github/scripts/lib/retry.bash is NOT excluded despite being
   # version-bump.sh's only other caller, because install-claude-cli.sh also
   # sources it.
   # (CHANGELOG.md lives outside SYNC_PATHS and never syncs, so a versioned
@@ -95,7 +105,7 @@ env:
   # validate-config.bash. Synced in wholesale by 9a2abed without anyone
   # excluding them, they failed on every PR from the first commit that
   # touched a synced path. See AlexanderMattTurner/.dotfiles#153.
-  EXCLUDE_PATHS: ".github/workflows/security-vulnerability-scan.yaml .github/prompts/security-vulnerability-scan.md .github/workflows/pre-commit.yaml .github/workflows/validate-config.yaml .github/scripts/check-proto-pollution.mjs .github/scripts/validate-config.sh .github/workflows/lint.yaml .github/workflows/node-tests.yaml .github/workflows/gitleaks.yaml .github/scripts/script-configured.sh .github/scripts/script-configured-output.sh .github/scripts/gitleaks-scan.sh .github/workflows/auto-version.yaml .github/workflows/release-canary.yaml .github/scripts/version-bump.sh .github/scripts/promote-changelog.mjs .github/scripts/release-canary.sh"
+  EXCLUDE_PATHS: ".github/workflows/security-vulnerability-scan.yaml .github/prompts/security-vulnerability-scan.md .github/workflows/pre-commit.yaml .github/workflows/validate-config.yaml .github/scripts/check-proto-pollution.mjs .github/scripts/validate-config.sh .github/workflows/lint.yaml .github/workflows/node-tests.yaml .github/workflows/gitleaks.yaml .github/scripts/script-configured.sh .github/scripts/script-configured-output.sh .github/scripts/gitleaks-scan.sh .github/workflows/auto-version.yaml .github/workflows/release-canary.yaml .github/workflows/build-publish-notify.yaml .github/scripts/version-bump.sh .github/scripts/version-bump.test.mjs .github/scripts/promote-changelog.mjs .github/scripts/release-canary.sh .github/scripts/npm-max-stable.mjs .github/scripts/npm-max-stable.test.mjs"
 
 concurrency:
   group: template-sync
