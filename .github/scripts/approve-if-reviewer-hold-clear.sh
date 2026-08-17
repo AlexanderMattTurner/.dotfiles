@@ -31,20 +31,36 @@
 #      sweep does not, so it never clears a body hold blindly — same trust the
 #      thread path already places in the model's verdicts.json.
 #
-# Env: GH_TOKEN, GH_REPO (owner/name), PR; REVIEWER_LOGIN, BODY_VERDICT_FILE optional.
+# Env: the GH_TOKEN_* ladder rungs (see lib/github-token-ladder.bash), GH_REPO
+# (owner/name), PR; REVIEWER_LOGIN, BODY_VERDICT_FILE optional.
 set -euo pipefail
 
 : "${GH_REPO:?GH_REPO required}"
 : "${PR:?PR number required}"
-REVIEWER_LOGIN="${REVIEWER_LOGIN:-github-actions[bot]}"
-# GitHub's GraphQL API returns an app bot's `login` WITHOUT the `[bot]` suffix the
-# REST API appends (REST `github-actions[bot]` ↔ GraphQL `github-actions`). Both
-# reviewer lookups below run through `gh api graphql`, so they compare against the
-# BARE login — strip a trailing `[bot]` from the configured value (and, in the jq,
-# from each node's login) so either spelling matches. Comparing the REST-shaped
-# `github-actions[bot]` against GraphQL's `github-actions` matched zero reviews, so
-# the script always concluded "no live hold" and never posted the clearing approval.
-REVIEWER_LOGIN_BARE="${REVIEWER_LOGIN%'[bot]'}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/github-token-ladder.bash disable=SC1091
+source "$SCRIPT_DIR/lib/github-token-ladder.bash"
+
+# Every call below spends API quota, so pick a credential that has some before
+# the first one rather than discovering it mid-flight. Reddening only once EVERY
+# rung is spent is the point: a spent top rung is not a reason to fail a step
+# whose posture is to degrade, but nothing left to spend anywhere is a real
+# blocker a human has to clear, so it is not swallowed either.
+GH_TOKEN="$(github_token_with_quota)" || {
+  echo "every configured GitHub credential is out of API quota; cannot read this PR's review state, so the reviewer's hold is left in place. Re-run once quota resets, or provision another TEMPLATE_SYNC_TOKEN." >&2
+  exit 1
+}
+export GH_TOKEN
+# Both reviewer lookups below run through `gh api graphql`, which spells an app
+# bot's login WITHOUT the `[bot]` suffix the REST API appends (REST
+# `github-actions[bot]` ↔ GraphQL `github-actions`). Comparing the REST-shaped
+# value against GraphQL's matched zero reviews, so this script always concluded
+# "no live hold" and never posted the clearing approval; reviewer_login_init owns
+# that normalization now, for every reviewer script (lib/reviewer-login.bash).
+# shellcheck source=lib/reviewer-login.bash disable=SC1091
+source "$SCRIPT_DIR/lib/reviewer-login.bash"
+reviewer_login_init
 
 owner="${GH_REPO%%/*}"
 name="${GH_REPO##*/}"
@@ -71,11 +87,11 @@ remaining_query='query($owner: String!, $name: String!, $pr: Int!, $endCursor: S
 # "unresolved == 0" (trivially true with no threads) would merge the reviewer's
 # concern unaddressed.
 # shellcheck disable=SC2016 # jq program is literal, not shell ($p is a jq var)
-counts="$(REVIEWER_LOGIN_BARE="$REVIEWER_LOGIN_BARE" gh api graphql --paginate \
+counts="$(gh api graphql --paginate \
   -f query="$remaining_query" -f owner="$owner" -f name="$name" -F pr="$PR" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-         | select((.comments.nodes[0].author.login // "" | sub("\\[bot\\]$"; "")) == env.REVIEWER_LOGIN_BARE)]
-        | {total: length, unresolved: (map(select(.isResolved == false)) | length)}' |
+  --jq "[.data.repository.pullRequest.reviewThreads.nodes[]
+         | ${REVIEWER_MATCH_THREAD_ROOT}]
+        | {total: length, unresolved: (map(select(.isResolved == false)) | length)}" |
   jq -s 'reduce .[] as $p ({total: 0, unresolved: 0};
            {total: (.total + $p.total), unresolved: (.unresolved + $p.unresolved)})')"
 unresolved="$(jq -r '.unresolved' <<<"$counts")"
@@ -123,11 +139,11 @@ reviews_query='query($owner: String!, $name: String!, $pr: Int!, $endCursor: Str
     }
   }
 }'
-latest_state="$(REVIEWER_LOGIN_BARE="$REVIEWER_LOGIN_BARE" gh api graphql --paginate \
+latest_state="$(gh api graphql --paginate \
   -f query="$reviews_query" -f owner="$owner" -f name="$name" -F pr="$PR" \
-  --jq '.data.repository.pullRequest.reviews.nodes[]
-        | select((.author.login // "" | sub("\\[bot\\]$"; "")) == env.REVIEWER_LOGIN_BARE)
-        | {state, submittedAt}' |
+  --jq ".data.repository.pullRequest.reviews.nodes[]
+        | ${REVIEWER_MATCH_AUTHOR}
+        | {state, submittedAt}" |
   jq -rs 'if length == 0 then "" else (sort_by(.submittedAt) | last | .state) end')"
 
 if [[ "$latest_state" != "CHANGES_REQUESTED" && "$latest_state" != "COMMENTED" ]]; then
@@ -159,12 +175,12 @@ dismiss_stale_hold() {
   # CHANGES_REQUESTED keeps blocking until dismissed or superseded by an APPROVED
   # from the same reviewer, and a later COMMENTED review does not clear it. So the
   # blocking review is routinely not the latest one.
-  review_id="$(REVIEWER_LOGIN_BARE="$REVIEWER_LOGIN_BARE" gh api graphql --paginate \
+  review_id="$(gh api graphql --paginate \
     -f query="$reviews_query" -f owner="$owner" -f name="$name" -F pr="$PR" \
-    --jq '.data.repository.pullRequest.reviews.nodes[]
-          | select((.author.login // "" | sub("\\[bot\\]$"; "")) == env.REVIEWER_LOGIN_BARE)
-          | select(.state == "CHANGES_REQUESTED")
-          | {databaseId, submittedAt}' |
+    --jq ".data.repository.pullRequest.reviews.nodes[]
+          | ${REVIEWER_MATCH_AUTHOR}
+          | select(.state == \"CHANGES_REQUESTED\")
+          | {databaseId, submittedAt}" |
     jq -rs 'if length == 0 then "" else (sort_by(.submittedAt) | last | .databaseId) end')"
 
   if [[ -z "$review_id" ]]; then
