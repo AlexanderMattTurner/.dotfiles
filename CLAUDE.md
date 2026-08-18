@@ -29,6 +29,8 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
     `MONITOR_DISABLED=1`.
   - `hooks/notify.bash` — cross-platform desktop notification for the
     Notification lifecycle hook.
+  - `hooks/statusline.bash` — shows model, branch, context usage, and
+    session cost in the Claude Code status line.
   - `bin/claude-private`, `bin/claude-paranoid` — claude-code wrappers
     that route through ccr to Venice. `claude-private` defaults to
     Venice's `default_code` model and escalates to `claude-opus-4-7`
@@ -568,6 +570,24 @@ bullet):
   would otherwise flag. Renaming them locally would just have the next
   sync recreate the `.sh` originals alongside the renamed `.bash`
   copies — this is a permanent local exemption, not a to-fold bug.
+
+**Known unresolved: several template-synced workflows still trigger on
+`push: branches: [main]` (or `["main"]`) only, but this repo's default
+branch is `master`** — so their `push` path silently never fires here
+(`zizmor.yaml`, `hook-lifecycle.yaml`, `format-check.yaml`,
+`auto-resolve-conflicts.yaml`, `pr-meta-privileged.yaml`,
+`sync-required-checks.yaml`). Their `pull_request` triggers still work,
+which is why this went unnoticed. Left unfixed here deliberately: three
+of these back `# required-check: true` reporters
+(`format-check-passed`, `hook-lifecycle-passed`, `zizmor-passed`) that
+`sync-required-checks.yaml` uses as the *complete* source of truth for
+branch-protection's required checks, and that annotation coverage is
+thin (only those 3 in the whole tree) — flipping triggers live without
+first confirming what the ruleset actually requires today risks
+silently dropping a currently-required check. Before fixing: run
+`sync-required-checks.yaml` via `workflow_dispatch` with
+`check-only: true` to see the actual drift, annotate any reporter that
+should be required but isn't, then add `master` to each trigger.
 
 ## When fixing CI failures
 

@@ -8,7 +8,10 @@ name: CI failure notify
 # `workflow_run` has no wildcard, so `workflows:` below must name every
 # workflow in this repo with a `push:` or `schedule:` trigger (matched by the
 # workflow's `name:`). A ci-truth-serum hook (check-failure-notifier-coverage)
-# keeps this list in sync with the tree.
+# is supposed to keep this list in sync with the tree, but no such hook is
+# wired into this repo's .pre-commit-config.yaml — which is exactly how this
+# list drifted (missing Idempotency/Uninstall round-trip until an audit
+# caught it). Treat this list as hand-maintained until that hook exists here.
 # The dangerous-triggers finding targets workflows that check out or execute
 # the triggering ref's code with write credentials; this one checks out only
 # the default branch (credential-less) and gates on default-branch runs.
@@ -17,21 +20,17 @@ on: # zizmor: ignore[dangerous-triggers]
     types: [completed]
     workflows:
       - Auto-resolve merge conflicts
-      - Auto version bump and publish
       - CI failure-rate report
       - Claude reviewer-hold sweeper
       - Format check
-      - Gitleaks Secret Scanning
       - Hook lifecycle
+      - Idempotency
       - Lint
-      - Node tests
       - PR meta (privileged)
-      - pre-commit
-      - Release canary
+      - Uninstall round-trip
       - Weekly Security & Dependency Remediation
       - Sync required status checks
       - Sync from Template
-      - Validate config
       - zizmor
 
 concurrency:

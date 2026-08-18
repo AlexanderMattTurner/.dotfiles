@@ -176,10 +176,6 @@ else
     set fish_clipboard_paste_cmd 'xclip -selection clipboard -o'
 end
 
-function get_ps
-    echo (whoami)'@'(hostname)': '(pwd)
-end
-
 # Git aliases
 abbr -a gac 'git add -A && git commit -m'
 abbr -a gs 'git status'

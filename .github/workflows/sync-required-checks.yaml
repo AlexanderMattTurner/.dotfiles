@@ -1,12 +1,17 @@
 name: Sync required status checks
 
-# Apply half of the check-required-reporter pair. The pre-commit hook forces
-# every always() reporter to carry a `# required-check: true|false` annotation;
-# the apply tool (hosted in ci-truth-serum) reads those annotations (the SSOT),
-# expands each required job's name across its own matrix, and rewrites the
-# branch-protection ruleset's required_status_checks to exactly that set — so a
-# reporter's classification and the gate that actually blocks merges can never
-# silently drift apart.
+# Apply half of the check-required-reporter pair. The pre-commit hook that's
+# supposed to force every always() reporter to carry a
+# `# required-check: true|false` annotation is NOT wired into this repo's
+# .pre-commit-config.yaml — only 3 of the always() reporters in this tree
+# (format-check-passed, hook-lifecycle-passed, zizmor-passed) actually carry
+# one. The apply tool (hosted in ci-truth-serum) reads those annotations (the
+# SSOT) and rewrites the branch-protection ruleset's required_status_checks
+# to EXACTLY that annotated set — so until the missing annotations are added
+# (or the tree's actual required checks are confirmed to already be exactly
+# those 3), enabling this on a real push branch risks silently dropping any
+# other currently-required check from the ruleset. See the `on:` comment
+# below.
 #
 # Runs only post-merge on main (and on demand). It mutates branch protection, so
 # it needs a token with `administration: write`; the stock GITHUB_TOKEN cannot
@@ -14,6 +19,19 @@ name: Sync required status checks
 # if it is absent. Not a required check itself (no pull_request trigger).
 on:
   push:
+    # NOT switched to `master` here despite this repo's default branch being
+    # `master`, not `main` (the template's assumption) — `main`-only leaves
+    # this workflow permanently unfireable by a normal merge here, so the
+    # ruleset it maintains never self-heals. But only 3 jobs in the whole
+    # tree carry a `# required-check: true` annotation (format-check-passed,
+    # hook-lifecycle-passed, zizmor-passed) — lint.yml, idempotency.yml,
+    # uninstall.yml, pr-meta.yaml have none. Since this tool rewrites
+    # required_status_checks to EXACTLY the annotated set, flipping this
+    # trigger live would risk silently dropping any of those from branch
+    # protection if they're required today. Fix by first running
+    # `workflow_dispatch` with `check-only: true` to see the actual drift,
+    # then either annotate the missing gates or confirm they aren't
+    # currently required, before enabling on `master`.
     branches: [main]
     paths:
       - .github/workflows/**

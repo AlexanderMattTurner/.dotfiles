@@ -11,6 +11,7 @@ has never completed, a job configured on a server that lost it, and a job
 whose last success is weeks old all present as "the agent is running".
 """
 
+import shutil
 import sqlite3
 import subprocess
 import time
@@ -116,6 +117,37 @@ def test_unreadable_job_db_is_never(tmp_path: Path) -> None:
     server = tmp_path / "Duplicati-server.sqlite"
     _make_server_db(server, [job])
     assert _health(server) == "never"
+
+
+def test_missing_sqlite3_is_no_sqlite(tmp_path: Path) -> None:
+    """A machine without sqlite3 must report unknowable health, not no-db.
+
+    A PATH with no sqlite3 on it must short-circuit before duplicati_health
+    ever tries to read a database — even one that would otherwise report ok.
+    """
+    job = tmp_path / "JOB.sqlite"
+    _make_job_db(job, [int(time.time()) - 1 * DAY])
+    server = tmp_path / "Duplicati-server.sqlite"
+    _make_server_db(server, [job])
+
+    # PATH must still resolve `bash` itself (subprocess does its own PATH
+    # search against the env it's given), but nothing else — so sqlite3 is
+    # unreachable inside the script without faking the whole environment.
+    bash_path = shutil.which("bash")
+    assert bash_path is not None
+    bin_without_sqlite = tmp_path / "bin-without-sqlite"
+    bin_without_sqlite.mkdir()
+    (bin_without_sqlite / "bash").symlink_to(bash_path)
+    assert (
+        _run_lib(
+            "duplicati_health",
+            {
+                "DUPLICATI_SERVER_DB": str(server),
+                "PATH": str(bin_without_sqlite),
+            },
+        )
+        == "no-sqlite"
+    )
 
 
 @pytest.mark.parametrize("age_days", [0, 1, 3])

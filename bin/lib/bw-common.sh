@@ -64,7 +64,13 @@ bw_require_cmds() {
 
 # Return 0 if bw has any session at all (locked or unlocked), 1 otherwise.
 bw_is_logged_in() {
-    bwx status --raw 2>/dev/null | grep -qE '"status":"(locked|unlocked)"'
+    local status_out
+    # Captured to a var rather than piped into `grep -q`: under `pipefail`
+    # (several callers run under `set -euo pipefail`), grep matching early
+    # can SIGPIPE-kill a still-writing `bwx status`, turning that 141 into
+    # this function's reported (failure) exit status even on a match.
+    status_out="$(bwx status --raw 2>/dev/null)"
+    [[ "$status_out" =~ \"status\":\"(locked|unlocked)\" ]]
 }
 
 # Exit-style guard: errors out if not logged in.
