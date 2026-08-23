@@ -42,6 +42,13 @@
 
 set -euo pipefail
 
+# tmux_snapshot_dir lives here, so this script and doctor.bash agree on where
+# resurrect keeps its snapshots. Getting that path wrong would make the restore
+# below silently no-op on a machine whose snapshots are perfectly healthy.
+BOOTSTRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/tmux-snapshot.sh
+source "$BOOTSTRAP_DIR/lib/tmux-snapshot.sh"
+
 # Overridable so tests can inject a stub instead of driving a real tmux server.
 TMUX_BIN="${TMUX_BIN:-tmux}"
 
@@ -140,25 +147,9 @@ acquire_lock() {
     done
 }
 
-snapshot_exists() {
-    local dir candidates=()
-    dir="$("$TMUX_BIN" show-option -gqv @resurrect-dir 2>/dev/null)" || dir=""
-    if [[ -n "$dir" ]]; then
-        candidates=("$dir")
-    else
-        # resurrect's own default, then the pre-XDG location it used to use.
-        candidates=("${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect" "$HOME/.tmux/resurrect")
-    fi
-    for dir in "${candidates[@]}"; do
-        if [[ -e "$dir/last" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
 # Ask resurrect where its restore script is rather than hardcoding a plugin
-# path, so a relocated tpm install keeps working.
+# path, so a relocated tpm install keeps working. tmux_snapshot_dir comes from
+# bin/lib/tmux-snapshot.sh, sourced above.
 run_restore() {
     local script
     script="$("$TMUX_BIN" show-option -gqv @resurrect-restore-script-path 2>/dev/null)" || script=""
@@ -166,12 +157,16 @@ run_restore() {
         printf 'tmux-bootstrap: tmux-resurrect not loaded; nothing to restore\n' >&2
         return 0
     fi
-    if ! snapshot_exists; then
+    if [[ ! -e "$(tmux_snapshot_dir)/last" ]]; then
         # Fresh machine. restore.sh would flash "resurrect file not found!" into
         # the session we are about to hand over, so skip it quietly instead.
         return 0
     fi
-    "$script" >/dev/null 2>&1
+    # A restore that fails part-way still beats handing over a bare shell, and
+    # must not abort before the session is marked and claimed below.
+    if ! "$script" >/dev/null 2>&1; then
+        printf 'tmux-bootstrap: resurrect restore failed; session may be incomplete\n' >&2
+    fi
 }
 
 # An established server is not ours to replay a snapshot into. This is the fast

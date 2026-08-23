@@ -27,16 +27,26 @@ TMUX_BIN="${TMUX_BIN:-tmux}"
 # driven trigger.
 TMUX_SNAPSHOT_GRACE_INTERVALS="${TMUX_SNAPSHOT_GRACE_INTERVALS:-2}"
 
-# Where resurrect keeps its snapshots. Honors @resurrect-dir, else resurrect's
-# own XDG default.
+# Where resurrect keeps its snapshots. This must mirror resurrect's own
+# scripts/helpers.sh exactly — looking in the wrong directory would report
+# `no-snapshot` for a machine whose snapshots are perfectly healthy, and
+# (worse) send bin/tmux-bootstrap.bash's existence check the same way:
+#
+#   @resurrect-dir, else ~/.tmux/resurrect when that directory exists,
+#   else $XDG_DATA_HOME/tmux/resurrect.
+#
+# The pre-XDG path is not dead: resurrect still prefers it whenever it exists,
+# which is any machine that used an older resurrect before the XDG move.
 tmux_snapshot_dir() {
     local dir
     dir="$("$TMUX_BIN" show-option -gqv @resurrect-dir 2>/dev/null)" || dir=""
     if [ -n "$dir" ]; then
         printf '%s\n' "$dir"
-        return 0
+    elif [ -d "$HOME/.tmux/resurrect" ]; then
+        printf '%s\n' "$HOME/.tmux/resurrect"
+    else
+        printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect"
     fi
-    printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect"
 }
 
 _tmux_snapshot_mtime() {

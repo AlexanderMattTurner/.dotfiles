@@ -57,6 +57,7 @@ RESTORE_STUB = """#!/bin/sh
 # needs in order to observe a real race.
 sleep "${RESTORE_DELAY:-0}"
 printf 'restored\\n' >>"$FIXDIR/restored.txt"
+exit "${RESTORE_EXIT:-0}"
 """
 
 DEAD_PID = 999999
@@ -107,6 +108,7 @@ class Bootstrap:
             "TMUX_BOOTSTRAP_LOCK": str(self.lock),
             "TMUX_BOOTSTRAP_WAIT": "2",
             "RESTORE_DELAY": "0",
+            "RESTORE_EXIT": "0",
         }
         env.update(overrides)
         return env
@@ -211,6 +213,20 @@ def test_missing_resurrect_plugin_still_yields_a_session(boot):
     assert result.stdout.strip() == "primary"
     assert boot.calls_to("new-session") == ["new-session -d -s main"]
     assert boot.restores == []
+
+
+def test_failed_restore_still_yields_a_claimed_session(boot):
+    """A half-restored session beats dropping the shell into nothing.
+
+    `set -e` would otherwise abort before the marker and the `primary` verdict,
+    leaving a server nobody claims and a lock nobody thinks to re-check.
+    """
+    result = boot.run(RESTORE_EXIT="1")
+
+    assert result.stdout.strip() == "primary"
+    assert boot.calls_to("set-option") == ["set-option -g @dotfiles-tmux-restored 1"]
+    assert "restore failed" in result.stderr
+    assert not boot.lock.exists()
 
 
 def test_lock_held_by_live_process_defers(boot, live_pid):

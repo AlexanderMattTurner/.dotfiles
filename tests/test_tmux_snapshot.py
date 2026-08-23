@@ -193,25 +193,51 @@ def test_missing_tmux(tmp_path):
     assert result.stdout.strip() == "no-tmux"
 
 
-def test_snapshot_dir_falls_back_to_xdg_default(snaps, tmp_path):
-    """No @resurrect-dir set: resurrect's own XDG default is where it looks."""
-    (snaps.dir / "opt-dir.txt").write_text("\n")
-    xdg = tmp_path / "xdg"
-
+def _snapshot_dir(snaps, home: Path, xdg: Path) -> str:
     result = subprocess.run(
         ["bash", "-c", f'source "{LIB}"\ntmux_snapshot_dir'],
         env={
             **os.environ,
             "TMUX_BIN": str(snaps.stub),
             "FIXDIR": str(snaps.dir),
+            "HOME": str(home),
             "XDG_DATA_HOME": str(xdg),
         },
         capture_output=True,
         text=True,
         check=True,
     )
+    return result.stdout.strip()
 
-    assert result.stdout.strip() == str(xdg / "tmux" / "resurrect")
+
+def test_snapshot_dir_falls_back_to_xdg_default(snaps, tmp_path):
+    """No @resurrect-dir set: resurrect's own XDG default is where it looks."""
+    (snaps.dir / "opt-dir.txt").write_text("\n")
+    home, xdg = tmp_path / "home", tmp_path / "xdg"
+    home.mkdir()
+
+    assert _snapshot_dir(snaps, home, xdg) == str(xdg / "tmux" / "resurrect")
+
+
+def test_snapshot_dir_prefers_the_pre_xdg_location(snaps, tmp_path):
+    """resurrect's helpers.sh still prefers ~/.tmux/resurrect when it exists.
+
+    Any machine that ran an older resurrect has that directory, and looking in
+    the XDG path instead would report `no-snapshot` for a perfectly healthy
+    install — and send the bootstrap's restore down the same wrong path.
+    """
+    (snaps.dir / "opt-dir.txt").write_text("\n")
+    home, xdg = tmp_path / "home", tmp_path / "xdg"
+    (home / ".tmux" / "resurrect").mkdir(parents=True)
+
+    assert _snapshot_dir(snaps, home, xdg) == str(home / ".tmux" / "resurrect")
+
+
+def test_explicit_resurrect_dir_outranks_both_defaults(snaps, tmp_path):
+    home, xdg = tmp_path / "home", tmp_path / "xdg"
+    (home / ".tmux" / "resurrect").mkdir(parents=True)
+
+    assert _snapshot_dir(snaps, home, xdg) == str(snaps.snapshot_dir)
 
 
 def test_doctor_fails_on_a_stale_snapshot(snaps, tmp_path):
