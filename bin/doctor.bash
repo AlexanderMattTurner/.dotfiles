@@ -367,7 +367,7 @@ else
     fail "TPM" "$TPM_DIR is not a git checkout (run setup.bash)"
 fi
 
-# The session reaper that keeps @continuum-restore from resurrecting empty
+# The session reaper that keeps the snapshot replay from resurrecting empty
 # shells forever. Both halves must hold: an executable script, and the hooks
 # in .tmux.conf that actually run it.
 if [[ -x "$DOTFILES_DIR/bin/tmux-gc.bash" ]]; then
@@ -381,6 +381,64 @@ if grep -q 'tmux-gc' "$DOTFILES_DIR/.tmux.conf" 2>/dev/null; then
 else
     fail "tmux-gc hook" "no client-attached hook in .tmux.conf; idle sessions will accumulate"
 fi
+
+if [[ -x "$DOTFILES_DIR/bin/tmux-bootstrap.bash" ]]; then
+    pass "tmux-bootstrap script executable"
+else
+    fail "tmux-bootstrap" "$DOTFILES_DIR/bin/tmux-bootstrap.bash is missing or not executable"
+fi
+
+# Guard the fix for the 2026-08-23 session loss. Continuum's restore gate
+# miscounts concurrent tmux *clients* as a competing tmux *server* and then
+# skips the restore in total silence, so restore is driven by
+# bin/tmux-bootstrap.bash instead. Both halves of that handoff must hold:
+# continuum's own restore stays off, and the fish launcher actually calls the
+# bootstrap. Either one regressing puts us back to losing sessions on reboot
+# with no symptom until the next reboot.
+if grep -q "@continuum-restore 'off'" "$DOTFILES_DIR/.tmux.conf" 2>/dev/null; then
+    pass "continuum auto-restore disabled (bootstrap owns restore)"
+else
+    fail "continuum restore" "@continuum-restore is not 'off' in .tmux.conf; it races bin/tmux-bootstrap.bash for the snapshot"
+fi
+
+if grep -q 'tmux-bootstrap' "$DOTFILES_DIR/apps/fish/config.fish" 2>/dev/null; then
+    pass "tmux-bootstrap wired into fish auto-launch"
+else
+    fail "tmux-bootstrap hook" "apps/fish/config.fish does not call 'dotfiles tmux-bootstrap'; sessions will not be restored after a reboot"
+fi
+
+# A snapshot only helps if it is still being written, and continuum's save hook
+# can be skipped by the same client-vs-server miscount that broke restore —
+# silently, with nothing on disk or on screen looking wrong until a reboot eats
+# every session. tmux_snapshot_health is the single classifier; keep this case
+# statement exhaustive over its states (see CLAUDE.md "tmux session restore").
+source "$DOTFILES_DIR/bin/lib/tmux-snapshot.sh"
+TMUX_SNAPSHOT_STATE="$(tmux_snapshot_health)"
+case "$TMUX_SNAPSHOT_STATE" in
+ok:*)
+    pass "tmux snapshot fresh (saved ${TMUX_SNAPSHOT_STATE#ok:}m ago)"
+    ;;
+stale:*)
+    fail "tmux snapshots" \
+        "newest snapshot predates this tmux server by ${TMUX_SNAPSHOT_STATE#stale:}m; continuum has stopped saving — a reboot would lose every session"
+    ;;
+warming:*)
+    skip "tmux snapshots" "server up ${TMUX_SNAPSHOT_STATE#warming:}s; first save not due yet"
+    ;;
+no-snapshot)
+    fail "tmux snapshots" \
+        "no snapshot in $(tmux_snapshot_dir); a reboot would lose every session"
+    ;;
+no-server)
+    skip "tmux snapshots" "no tmux server running"
+    ;;
+no-tmux)
+    skip "tmux snapshots" "tmux not installed"
+    ;;
+*)
+    fail "tmux snapshots" "unhandled tmux_snapshot_health state: $TMUX_SNAPSHOT_STATE"
+    ;;
+esac
 
 # ── cron jobs ───────────────────────────────────────────────────────────────
 section "cron"

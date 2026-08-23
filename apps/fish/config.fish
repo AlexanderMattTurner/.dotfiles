@@ -25,15 +25,31 @@ else if test -d /home/linuxbrew/.linuxbrew
 end
 
 # Auto-launch tmux if not already inside a tmux session.
-# First iTerm2 window after reboot: no server -> start one, attach to `main`
-# (continuum-restore fires here). Subsequent windows: server is up, so spawn a
-# fresh independent session per window for parallel layouts.
+# First iTerm2 window after reboot: no server -> `dotfiles tmux-bootstrap`
+# starts one and replays the resurrect snapshot, then we attach to `main`.
+# Subsequent windows: it answers `secondary`, so they get a fresh independent
+# session each for parallel layouts.
+#
+# The bootstrap is what serializes this. Doing the work inline here is what
+# broke restore-after-reboot: iTerm2 relaunches its windows in parallel, so
+# several `tmux new-session` processes existed at once, and continuum's restore
+# gate miscounts concurrent tmux *clients* as a competing tmux *server* and
+# skips the restore without a word. See bin/tmux-bootstrap.bash.
+#
+# Falls back to the naive path when the dispatcher isn't linked yet, so a
+# machine that has never run setup.bash still gets a tmux.
 #
 # Escape hatch: set NO_AUTO_TMUX (any value) to skip the exec — editor-embedded
 # terminals, one-off interactive shells, and remote sessions don't want it.
 # One shell:  NO_AUTO_TMUX=1 fish     Permanently:  set -Ux NO_AUTO_TMUX 1
 if status is-interactive; and not set -q TMUX; and not set -q NO_AUTO_TMUX; and command -q tmux
-    if tmux has-session 2>/dev/null
+    set -l _tmux_role
+    if test -x $HOME/.local/bin/dotfiles
+        set _tmux_role ($HOME/.local/bin/dotfiles tmux-bootstrap 2>/dev/null)
+    end
+    if test "$_tmux_role" = primary
+        tmux new-session -A -s main
+    else if tmux has-session 2>/dev/null
         tmux new-session
     else
         tmux new-session -A -s main

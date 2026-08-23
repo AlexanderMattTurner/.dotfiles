@@ -9,6 +9,7 @@ complete -c dotfiles -n __fish_use_subcommand -a link -d "Refresh symlinks only 
 complete -c dotfiles -n __fish_use_subcommand -a setup -d "Run the full installer (setup.bash)"
 complete -c dotfiles -n __fish_use_subcommand -a lint -d "Run all linters"
 complete -c dotfiles -n __fish_use_subcommand -a tmux-gc -d "Reap idle, empty tmux sessions"
+complete -c dotfiles -n __fish_use_subcommand -a tmux-bootstrap -d "Start tmux and replay the resurrect snapshot"
 complete -c dotfiles -n __fish_use_subcommand -a help -d "Show usage"
 
 complete -c dotfiles -n "__fish_seen_subcommand_from doctor" -l verbose -d "Print every passing check"
