@@ -464,6 +464,67 @@ set-exit-node exit-code/stderr/menu.log contract is locked by
 `tests/test_set_exit_node.py` (which self-skips when a real tailscale
 CLI is installed, so it can never drive an actual VPN).
 
+### tmux session restore
+
+`bin/tmux-bootstrap.bash` owns starting the tmux server and replaying the
+tmux-resurrect snapshot. **`@continuum-restore` is `off` and must stay
+off** — leaving it on races the bootstrap for the same snapshot.
+
+Continuum cannot be trusted to restore. Both its restore hook and its
+*save* hook are gated on `another_tmux_server_running_on_startup`, which
+is (`scripts/helpers.sh`):
+
+```sh
+ps -u $uid -o "command pid" | grep "^tmux" | grep -v "^tmux source"
+```
+
+counted against 1. That pattern matches tmux **clients** exactly as
+readily as tmux **servers**. Every interactive fish runs `tmux
+new-session …`, and iTerm2 relaunches its saved windows in parallel at
+login, so two or three such processes exist in the instant the server
+starts. Continuum concludes a rival server is running and returns
+without restoring.
+
+The failure is **totally silent, and invisible until the next reboot**:
+no message, no log line, the plugin loaded, the status bar normal, and a
+snapshot on disk that still looks perfectly healthy. On 2026-08-23 a
+reboot came up with every session gone while
+`~/.local/share/tmux/resurrect/last` held all of them. Restore itself
+was never broken — running `restore.sh` by hand replayed the snapshot
+fine. Only the trigger failed. **Do not re-chase this as a resurrect or
+a tmux-version bug.**
+
+A second consequence of the same predicate: it also gates
+`add_resurrect_save_interpolation`, so the race can silently stop
+*saving* too. Serializing the server start fixes both — when continuum
+loads there is exactly one client and one server, so its count is 1.
+
+Invariants, all enforced by `doctor.bash`:
+
+- `@continuum-restore 'off'` in `.tmux.conf`.
+- `apps/fish/config.fish` calls `dotfiles tmux-bootstrap` and attaches to
+  `main` only on `primary`. Doing the `tmux new-session` decision inline
+  is what caused the loss.
+- A snapshot newer than the current tmux server's `#{start_time}` (past
+  two save intervals of grace). This is the only honest test that saving
+  still works, and the only check that would have caught the outage
+  before a reboot did.
+- The wait loop in the bootstrap must not run `tmux`. A probe there lands
+  in the very `ps` snapshot continuum samples, recreating the miscount.
+
+`tmux_snapshot_health` in `bin/lib/tmux-snapshot.sh` is the single
+classifier for snapshot freshness (`ok:<min>` / `stale:<min>` /
+`warming:<sec>` / `no-snapshot` / `no-server` / `no-tmux`). It only ever
+*under*-reports freshness — a pending save reads as `warming`, never as
+`ok` — because it exists to catch saving that stopped and must not
+invent a save that never landed. Adding a failure mode = new state there
++ an arm in `bin/doctor.bash`'s case + a case in
+`tests/test_tmux_snapshot.py`.
+
+Behaviour is locked by `tests/test_tmux_bootstrap.py` and
+`tests/test_tmux_snapshot.py`, which drive the scripts against a stubbed
+tmux — they never touch a real server.
+
 ## Conventions
 
 - Bash scripts: `set -euo pipefail` at the top. Use `command_exists` for

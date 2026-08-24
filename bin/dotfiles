@@ -7,6 +7,7 @@
 #   dotfiles link                         # refresh symlinks only (runs setup.bash --link-only)
 #   dotfiles lint [--ci] [--fix]          # run all linters
 #   dotfiles tmux-gc [--dry-run]          # reap idle, empty tmux sessions
+#   dotfiles tmux-bootstrap               # start tmux + replay resurrect snapshot
 #
 # Wraps the underlying scripts in bin/ and setup.bash so users get a single
 # entry point with fish-completable subcommands. All extra args are passed
@@ -37,6 +38,9 @@ subcommands:
   setup      run the full installer (setup.bash)
   lint       run pre-commit hooks (bin/lint.bash → pre-commit run --all-files)
   tmux-gc    reap idle, empty tmux sessions (bin/tmux-gc.bash)
+  tmux-bootstrap
+             start the tmux server and replay the resurrect snapshot once
+             (bin/tmux-bootstrap.bash); prints "primary" or "secondary"
   help       show this message (alias: -h, --help)
 
 Extra args are forwarded to the underlying script.
@@ -75,6 +79,10 @@ lint)
 tmux-gc)
     shift
     exec bash "$DOTFILES_DIR/bin/tmux-gc.bash" "$@"
+    ;;
+tmux-bootstrap)
+    shift
+    exec bash "$DOTFILES_DIR/bin/tmux-bootstrap.bash" "$@"
     ;;
 *)
     printf "dotfiles: unknown subcommand %q\n\n" "$1" >&2

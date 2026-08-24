@@ -62,14 +62,41 @@ notify_blackhole() {
     fi
 }
 
-# Self-heal the exit-node-teardown blackhole: poll for a primary default route,
-# and if it never returns, bounce the (pre-captured) primary interface and poll
-# again. Surfaces a real failure — log line, notification, non-zero exit —
-# rather than silently pretending the disconnect succeeded.
+# True when sc_default_router is non-empty on $1 consecutive 1s samples; a
+# single empty sample fails immediately.
+#
+# One sample is not enough, and sampling at t=0 is actively wrong: `tailscale
+# set` returns once the daemon has *accepted* the pref change, not once it has
+# rebuilt the routing table, so the pre-teardown route is still in SC state for
+# a second or two afterwards. A t=0 probe therefore reads the route that is
+# about to be torn down, declares the disconnect clean, and returns before the
+# drop it exists to catch. That is the false-clean `off → off` in menu.log at
+# 2026-08-09T21:34Z — no bounce, no warning, and no internet until a reboot.
+route_stable_for() {
+    local samples="$1" _
+    for _ in $(seq 1 "$samples"); do
+        [ -n "$(sc_default_router)" ] || return 1
+        sleep 1
+    done
+    return 0
+}
+
+# Self-heal the exit-node-teardown blackhole: require a route that stays up
+# across the teardown window, and if it drops, give tailscaled a chance to
+# re-elect before bouncing the (pre-captured) primary interface. Surfaces a
+# real failure — log line, notification, non-zero exit — rather than silently
+# pretending the disconnect succeeded.
 restore_default_route() {
     local primary="$1" _
+    # Span the teardown window before believing the route survived it.
+    route_stable_for 6 && return 0
+    # It dropped. tailscaled sometimes re-elects on its own; wait before
+    # reaching for the bounce, which costs the user their Wi-Fi link.
     for _ in 1 2 3 4; do
-        if [ -n "$(sc_default_router)" ]; then return 0; fi
+        if route_stable_for 3; then
+            log "default route returned on its own after teardown"
+            return 0
+        fi
         sleep 2
     done
     log "disconnect blackholed the default route; bouncing ${primary:-unknown}"
@@ -78,7 +105,7 @@ restore_default_route() {
         return 1
     fi
     for _ in $(seq 1 12); do
-        if [ -n "$(sc_default_router)" ]; then
+        if route_stable_for 3; then
             log "default route restored after bouncing $primary"
             return 0
         fi
