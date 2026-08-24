@@ -624,6 +624,19 @@ bullet):
   string `'true'` never matches, which made "dry run" dispatches open
   real PRs. (The `actionlint` pre-commit hook now flags this class of
   expression-type mismatch.)
+- A `Prune dangling .claude symlinks` step in `claude-review.yaml`, added to
+  every job that starts Claude Code (`review`, `merge_delta_review`,
+  `thread_resolve`). This repo tracks `.claude/hooks` and `.claude/README.md`
+  as symlinks into `claude-guard/`, which is `.gitignore`d and so absent from
+  the trusted-branch checkout those jobs do. Claude Code stats `.claude/hooks`
+  at startup and dies with `ENOENT: ... statx '.claude/hooks'` on **every rung**
+  of the credential ladder, which then reports the aggregate as
+  `claude-run: every configured Claude credential errored`. **That message is a
+  lie — do not go looking for an expired token.** The prune runs
+  `bin/prune-dangling-symlinks.bash .claude` right after checkout; wiring is
+  locked by `tests/test_prune_dangling_symlinks.py`. Upstream doesn't need this
+  (the template has no `claude-guard` symlinks), so it is a permanent local
+  divergence rather than something to fold back.
 - The `sh-extension` pre-commit hook's `exclude` pattern additionally
   skips `.github/scripts/` and `.hooks/lint-skills.sh`: both are
   populated verbatim by `template-sync` from files the template itself

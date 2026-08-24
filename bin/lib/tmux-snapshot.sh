@@ -59,8 +59,10 @@ _tmux_snapshot_mtime() {
 
 # `list-sessions` is the only liveness probe that will not autostart a server;
 # `show-option` and `display-message` both would, so nothing may call them
-# before this returns true.
-_tmux_server_alive() {
+# before this returns true. bin/tmux-bootstrap.bash depends on that guarantee
+# too — it must not spin up an unmanaged server merely to ask whether one
+# exists — so this is shared rather than reimplemented per caller.
+tmux_server_alive() {
     "$TMUX_BIN" list-sessions >/dev/null 2>&1
 }
 
@@ -79,7 +81,7 @@ tmux_snapshot_health() {
         echo no-tmux
         return 0
     }
-    _tmux_server_alive || {
+    tmux_server_alive || {
         echo no-server
         return 0
     }
