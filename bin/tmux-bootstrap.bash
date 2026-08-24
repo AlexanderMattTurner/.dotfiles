@@ -42,15 +42,14 @@
 
 set -euo pipefail
 
-# tmux_snapshot_dir lives here, so this script and doctor.bash agree on where
-# resurrect keeps its snapshots. Getting that path wrong would make the restore
-# below silently no-op on a machine whose snapshots are perfectly healthy.
+# Supplies TMUX_BIN, tmux_server_alive, and tmux_snapshot_dir — shared with
+# doctor.bash so the two can never disagree about where resurrect keeps its
+# snapshots or about how to probe for a server without autostarting one.
+# Getting either wrong would make the restore below silently no-op on a machine
+# whose snapshots are perfectly healthy.
 BOOTSTRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/lib/tmux-snapshot.sh
 source "$BOOTSTRAP_DIR/lib/tmux-snapshot.sh"
-
-# Overridable so tests can inject a stub instead of driving a real tmux server.
-TMUX_BIN="${TMUX_BIN:-tmux}"
 
 # Session the snapshot is expected to carry, and that `primary` attaches to.
 PRIMARY_SESSION="${TMUX_BOOTSTRAP_SESSION:-main}"
@@ -103,13 +102,6 @@ say() {
     printf '%s\n' "$1"
 }
 
-# `list-sessions` is the only liveness probe that does NOT autostart a server.
-# `show-option` and `set-option` both do, which would spin up an unmanaged
-# server (sourcing .tmux.conf) purely to answer a question.
-server_alive() {
-    "$TMUX_BIN" list-sessions >/dev/null 2>&1
-}
-
 release_lock() {
     rm -f "$LOCK_FILE"
 }
@@ -134,7 +126,7 @@ acquire_lock() {
             continue
         fi
         # Holder finished and released. Retry immediately: the post-acquire
-        # server_alive check below is what turns this into a `secondary`.
+        # tmux_server_alive check below is what turns this into a `secondary`.
         #
         # Note this loop deliberately polls the lock file rather than tmux. A
         # `tmux …` probe here would add processes to the very ps snapshot
@@ -175,7 +167,7 @@ run_restore() {
 # and without the copy below a shell that wins the lock right as the previous
 # holder releases it would restore a second time. Both are load-bearing; the
 # one below is the actual safety net.
-if server_alive; then
+if tmux_server_alive; then
     say secondary
     exit 0
 fi
@@ -188,7 +180,7 @@ trap release_lock EXIT
 
 # We may have won the lock only after the previous holder finished building the
 # server. Re-check now that we hold it.
-if server_alive; then
+if tmux_server_alive; then
     say secondary
     exit 0
 fi
