@@ -10,6 +10,7 @@ doesn't put the script there.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -107,14 +108,14 @@ def test_settings_hook_command_resolves_to_a_managed_symlink() -> None:
     # Run managed_symlinks rather than grepping it: the list is generated (it
     # branches on uname and globs .aider*), so only its output is the contract.
     # setup.bash, doctor.bash and uninstall.bash all iterate exactly this.
+    #
+    # A synthetic HOME and an explicit env, because the developer's own shell
+    # exports DOTFILES_DIR: inheriting it lets this pass for the wrong reason
+    # on a laptop and fail on a runner.
+    home = "/nonexistent-home"
     emitted = subprocess.run(
-        [
-            "bash",
-            "-c",
-            f'DOTFILES_DIR="{DOTFILES}" '
-            f'HOME="{Path.home()}" '
-            f'. "{DOTFILES}/bin/lib/symlinks.sh" && managed_symlinks',
-        ],
+        ["bash", "-c", f'. "{DOTFILES}/bin/lib/symlinks.sh" && managed_symlinks'],
+        env={"PATH": os.environ["PATH"], "HOME": home, "DOTFILES_DIR": str(DOTFILES)},
         capture_output=True,
         text=True,
         timeout=10,
@@ -123,7 +124,7 @@ def test_settings_hook_command_resolves_to_a_managed_symlink() -> None:
     pairs = dict(
         line.split("|")[:2] for line in emitted.stdout.splitlines() if "|" in line
     )
-    target = str(Path.home() / ".claude" / "hooks" / HOOK.name)
+    target = f"{home}/.claude/hooks/{HOOK.name}"
     assert pairs.get(target) == str(HOOK), (
         f"{target} is not linked to {HOOK} by managed_symlinks"
     )

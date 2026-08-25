@@ -129,10 +129,15 @@ tailscale_dns_healthy() {
     return 1
 }
 
-# True as soon as DNS answers within $1 one-second attempts. `tailscale set`
-# returns when the daemon *accepts* the pref, not when its DNS manager has
-# re-applied, so a single probe at t=0 reads the pre-teardown config — the same
-# trap route_stable_for exists to avoid.
+# True as soon as DNS answers within $1 attempts. `tailscale set` returns when
+# the daemon *accepts* the pref, not when its DNS manager has re-applied, so a
+# single probe at t=0 reads the pre-teardown config — the same trap
+# route_stable_for exists to avoid.
+#
+# An attempt is NOT one second: the 1s pace is on top of dig's own wait, which
+# is what dominates when the resolver is unreachable rather than merely
+# answering SERVFAIL (up to +time per probe name). Budget accordingly — this
+# runs on the disconnect path while the user has no working DNS.
 tailscale_dns_recovers_within() {
     local attempts="$1" i
     for ((i = 0; i < attempts; i++)); do
