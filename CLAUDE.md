@@ -403,26 +403,62 @@ doctor is the real backstop, not the wrapper. We deliberately do *not*
 security updates on a VPN daemon.
 
 The worst failure: **clearing a Mullvad exit node blackholes all
-traffic.** `tailscale set --exit-node=` (the SwiftBar "Disconnect"
-action) tears down the tunnel's split-default routes, but the
-open-source `tailscaled` on macOS fails to re-elect the physical
-default route — macOS's `State:/Network/Global/IPv4` is left with no
-`Router`/`PrimaryInterface`, so every packet (v4 and v6) dies with
-"network is unreachable". Confirmed in `/var/log/tailscaled.stderr.log`:
-`link state: ...defaultRoute=` (empty) right after the disconnect,
-restored only by the reboot's `DefaultRoute: ""->"enX"` rebind. A
-`tailscaled` kickstart does **not** fix it — the daemon doesn't own the
-missing route; macOS SystemConfiguration does. The App Store Tailscale
-(NetworkExtension) tears down cleanly; this repo uses brew `tailscaled`,
-so we self-heal instead: `bin/tailscale-set-exit-node.bash`, on the
-disconnect path only, captures the primary interface *before* clearing
-(it's unreadable once blackholed), polls `sc_default_router` for a
-returning route, and if none comes back bounces the interface — Wi-Fi
-via `networksetup -setairportpower` (no sudo), the minimal equivalent of
-the reboot's rebind. It verifies recovery and, if it still fails, emits
-a notification + non-zero exit rather than pretending success. The
-detector reads SC state, *not* `route get default`, which reports
-success off stale utun / OrbStack `!` reject routes while offline.
+traffic — via DNS, not routing.** While the exit node is engaged
+`tailscaled` points *itself* at Mullvad's resolver
+(`dns: Set: {DefaultResolvers:[194.242.2.2] ...}` in
+`/var/log/tailscaled.stderr.log`) and points macOS at `tailscaled`
+(`/etc/resolv.conf` + `State:/Network/Global/DNS` → `100.100.100.100`).
+`194.242.2.2` is reachable **only through the tunnel**, so when
+`tailscale set --exit-node=` (the SwiftBar "Disconnect") tears the
+tunnel down and that pref survives, every lookup dies at a resolver with
+no path to it. The symptom reads as "no internet"; the giveaway is
+`dns: resolver: forward: sendTCP: response code indicating server
+failure: 2` on a loop while the physical default route is *perfectly
+healthy*. That is why a Wi-Fi bounce can't fix it (`tailscaled` just
+re-`Set`s the same DNS) and a reboot can (fresh daemon, macOS reverts to
+the DHCP servers still held in the service's DNS key).
+
+`bin/tailscale-set-exit-node.bash` self-heals it on the disconnect path:
+`restore_dns` gives the DNS manager a grace window (it re-applies a beat
+*after* `tailscale set` returns), then forces a teardown + re-apply by
+toggling `--accept-dns` off and back on — the only lever that works
+without sudo, which is required because SwiftBar runs the applier
+detached and cannot prompt. With the exit node already cleared, the
+re-apply derives resolvers from the netmap alone and drops the Mullvad
+entry. It restores `--accept-dns` to its prior value and no-ops when
+`CorpDNS` was already false (DNS never hijacked ⇒ not this bug).
+
+**Historical note — do not re-chase this.** This was long attributed to
+a *route* drop: `tailscaled` failing to re-elect the physical default
+route, leaving `State:/Network/Global/IPv4` with no
+`Router`/`PrimaryInterface`. `restore_default_route` + the Wi-Fi bounce
+were built for that theory and are retained (cheap, and the state was
+apparently seen once), but they are **not** what fires: across 17
+`→ off` disconnects in `menu.log` the recovery path logged *zero*
+times, because `sc_default_router` reads the router — which never drops.
+A teardown that checks only routing will always call this blackhole
+clean. Both halves are now verified, and both run even if the first
+fails.
+
+A second trigger reaches the same stale-resolver state with **no
+disconnect to hook**: sleep/wake churn, where an exit node stops routing
+(no `0.0.0.0/1`+`128.0.0.0/1` via `utun0`, peer goes `idle`) while DNS
+stays pointed through it — and the menubar still shows a flag, so
+traffic egresses in the clear. Nothing on the disconnect path can catch
+that, so `doctor.bash` checks `tailscale_dns_healthy` directly and is
+the only backstop for it.
+
+The probe is `dig` against the system's *configured* resolvers, because
+the rewritten `/etc/resolv.conf` is exactly the path that breaks. `dig
++short` exits 0 on SERVFAIL, so an **empty answer, not exit status**, is
+the signal. `tailscale_dns_healthy` deliberately answers "healthy" when
+no `dig` exists (never notify on a guess), which is why `doctor.bash`
+asks `tailscale_dns_probe_available` first and `skip`s rather than
+`pass`ing a check it never ran. Coverage lives in
+`tests/test_tailscale_health.py` (the lib functions) and the macOS-gated
+cases in `tests/test_set_exit_node.py` — the latter must keep `dig` in
+its stub set, or `restore_dns` silently no-ops and the path goes
+uncovered with nothing turning red.
 
 A separate, milder hazard: `brew upgrade tailscale` swaps the CLI binary
 but leaves the *old* `tailscaled` running (version skew). This is *not*
@@ -432,7 +468,7 @@ daemon's `status --json` Version; `setup.bash` kickstarts the daemon on
 skew (self-heals every run), `doctor.bash` FAILs on it, and both
 `tailscale-set-exit-node.bash` and `vpn.10s.bash` surface a *non-blocking*
 warning (they must not refuse to disconnect — that would only strand you
-on the exit node, and route recovery covers any teardown fallout). It
+on the exit node, and teardown recovery covers any fallout). It
 stays silent when either side is unreadable (EPERM/boot transients must
 not false-alarm). Tested in `tests/test_tailscale_health.py`.
 
