@@ -21,6 +21,7 @@ __pycache__/
 .pytest_cache/
 .claude/worktrees
 agent-glovebox/
+agent-glovebox-classifier/
 .agents/
 .codex/
 .pnpm-store

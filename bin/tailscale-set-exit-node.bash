@@ -67,8 +67,17 @@ bounce_interface() {
 notify_blackhole() {
     local ifc="${1:-unknown}"
     die "disconnect left no default route (interface: $ifc); bounce Wi-Fi or reboot"
+    notify "No internet after disconnecting the VPN. Bounce Wi-Fi or reboot."
+}
+
+# Message goes in as argv, never interpolated into the AppleScript source.
+notify() {
     if command -v osascript >/dev/null 2>&1; then
-        osascript -e 'display notification "No internet after disconnecting the VPN. Bounce Wi-Fi or reboot." with title "Tailscale"' >/dev/null 2>&1 || true
+        osascript \
+            -e 'on run argv' \
+            -e 'display notification (item 1 of argv) with title "Tailscale"' \
+            -e 'end run' \
+            -- "$1" >/dev/null 2>&1 || true
     fi
 }
 
@@ -122,6 +131,30 @@ restore_default_route() {
         sleep 2
     done
     notify_blackhole "$primary"
+    return 1
+}
+
+# Self-heal the *other* half of the teardown, and the one that actually bites:
+# tailscaled leaves DNS pointed at Mullvad's resolver, which is reachable only
+# through the tunnel it just tore down. The default route stays healthy
+# throughout, which is why restore_default_route above never catches this.
+# See CLAUDE.md "Tailscale daemon" and tailscale_dns_healthy in the lib.
+restore_dns() {
+    # Same grace the route check gets: the DNS manager re-applies a beat after
+    # `tailscale set` returns, so an immediate probe reads the stale config.
+    tailscale_dns_recovers_within 8 && return 0
+    log "disconnect left DNS on an unreachable resolver; re-applying"
+    if ! tailscale_dns_reapply "$TAILSCALE"; then
+        die "could not re-apply DNS (accept-dns toggle failed)"
+        notify "DNS is still pointed at the VPN resolver. Run: tailscale set --accept-dns=false; tailscale set --accept-dns=true"
+        return 1
+    fi
+    if tailscale_dns_recovers_within 15; then
+        log "DNS restored by re-applying accept-dns"
+        return 0
+    fi
+    die "DNS still dead after re-applying accept-dns"
+    notify "DNS is still pointed at the VPN resolver after disconnecting. Reboot, or run: tailscale set --accept-dns=false; tailscale set --accept-dns=true"
     return 1
 }
 
@@ -192,11 +225,15 @@ else
     exit "$rc"
 fi
 
-# Clearing a Mullvad exit node sometimes leaves macOS with no primary default
-# route (open-source tailscaled teardown bug), blackholing all traffic until an
-# interface bounce forces re-election. Confirmed via tailscaled's own log:
-# `link state: ...defaultRoute=` (empty) after the disconnect, restored only by
-# the reboot's `DefaultRoute: ""->"enX"` rebind. Self-heal it. See CLAUDE.md.
+# Clearing a Mullvad exit node can blackhole traffic two independent ways, so
+# verify both before calling the disconnect clean. DNS is the one that actually
+# fires in practice; the route drop is kept because it is cheap to check and
+# was observed at least once. Run both even if the first fails — reporting only
+# half a broken teardown is what sent us chasing routes for months. See
+# CLAUDE.md "Tailscale daemon".
 if $IS_MAC && [ -z "$host" ]; then
-    restore_default_route "$primary_if" || exit 5
+    teardown_rc=0
+    restore_default_route "$primary_if" || teardown_rc=5
+    restore_dns || teardown_rc=6
+    [ "$teardown_rc" -eq 0 ] || exit "$teardown_rc"
 fi

@@ -105,9 +105,14 @@ def test_off_clears_exit_node_without_lan_flag(tmp_path: Path) -> None:
 #   uname      reports Darwin; this is what opens the branch at all
 #   scutil     stands in for SystemConfiguration, and is the pipe writer whose
 #              early death is the bug under test
-#   sleep      no-op, so route_stable_for's 1s sample windows cost no wall clock
+#   sleep      no-op, so route_stable_for's 1s sample windows and restore_dns's
+#              retry pacing cost no wall clock
 #   tailscale  the CLI stub (find_tailscale would otherwise prefer the real
 #              binary and drive an actual VPN — see REAL_CLI above)
+#   dig        the DNS probe. Unstubbed it either goes missing (restore_dns
+#              silently no-ops, so nothing below is really exercised) or does
+#              live lookups against the runner's resolver — nondeterministic
+#              either way.
 #
 # If the script later shells out to a platform command absent from this list,
 # the branch stops executing and these tests keep passing on the fallback path.
@@ -126,22 +131,50 @@ seq 1 200000 | sed 's/^/  filler : /'
 """
 
 
-def _run_macos_disconnect(tmp_path: Path):
-    """Drive `off` down the macOS branch with the platform stubs above."""
+# DNS states the disconnect can land in. "heals" is the real bug's shape: dead
+# until tailscaled's DNS manager re-applies, which the accept-dns toggle forces.
+DNS_ALIVE = "alive"
+DNS_DEAD = "dead"
+DNS_HEALS_ON_REAPPLY = "heals"
+
+
+def _run_macos_disconnect(tmp_path: Path, dns: str = DNS_ALIVE):
+    """Drive `off` down the macOS branch with the platform stubs above.
+
+    Returns (proc, menu.log text, the `set` flags the script actually issued).
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     args_file = tmp_path / "set-args"
+    healed = tmp_path / "dns-healed"
+
+    if dns == DNS_ALIVE:
+        dig_body = "#!/bin/sh\necho 1.2.3.4\n"
+    elif dns == DNS_DEAD:
+        # `dig +short` exits 0 with no answer on SERVFAIL — the blackhole's
+        # actual signature, and why exit status can't be the signal.
+        dig_body = "#!/bin/sh\nexit 0\n"
+    else:
+        dig_body = f'#!/bin/sh\n[ -f "{healed}" ] && echo 1.2.3.4\nexit 0\n'
 
     stubs = {
         "uname": "#!/bin/sh\necho Darwin\n",
         "scutil": SCUTIL_STUB,
         "sleep": "#!/bin/sh\nexit 0\n",
+        "dig": dig_body,
         "tailscale": (
             "#!/bin/sh\n"
+            'case "$1 $2" in\n'
+            '"debug prefs") echo \'  "CorpDNS": true,\'; exit 0 ;;\n'
+            "esac\n"
             'case "$1" in\n'
             "version) echo 1.86.0; exit 0 ;;\n"
             'status) echo "100.64.0.1 mac turntrout@ macOS -"; exit 0 ;;\n'
-            f'set) shift; printf \'%s\\n\' "$@" >"{args_file}"; exit 0 ;;\n'
+            # Appends, so re-applying DNS can't erase the exit-node call that
+            # came before it.
+            f'set) shift; printf \'%s\\n\' "$@" >>"{args_file}"\n'
+            f'    case " $* " in *--accept-dns=true*) : >"{healed}" ;; esac\n'
+            "    exit 0 ;;\n"
             "esac\n"
         ),
     }
@@ -163,7 +196,11 @@ def _run_macos_disconnect(tmp_path: Path):
         timeout=60,
     )
     menu_log = tmp_path / "Library/Logs/com.turntrout.tailscale-exit-node/menu.log"
-    return proc, (menu_log.read_text() if menu_log.exists() else "")
+    return (
+        proc,
+        (menu_log.read_text() if menu_log.exists() else ""),
+        args_file.read_text().split() if args_file.exists() else [],
+    )
 
 
 def test_sc_readers_survive_a_still_writing_scutil(tmp_path: Path) -> None:
@@ -177,7 +214,7 @@ def test_sc_readers_survive_a_still_writing_scutil(tmp_path: Path) -> None:
     An awk that `exit`s on its first match closes the pipe while scutil is still
     writing, killing it with SIGPIPE (141). Reading to EOF is the fix.
     """
-    proc, log = _run_macos_disconnect(tmp_path)
+    proc, log, _ = _run_macos_disconnect(tmp_path)
 
     assert proc.returncode != 141, "scutil was SIGPIPE'd by an early awk exit"
     assert proc.returncode == 0, f"rc={proc.returncode} stderr={proc.stderr}"
@@ -196,9 +233,50 @@ def test_macos_disconnect_actually_entered_the_gated_branch(tmp_path: Path) -> N
     to bounce the interface would die on the missing command rather than quietly
     power-cycling the developer's Wi-Fi.
     """
-    proc, log = _run_macos_disconnect(tmp_path)
+    proc, log, _ = _run_macos_disconnect(tmp_path)
 
     assert proc.returncode == 0, proc.stderr
     assert "blackhole" not in log.lower()
     assert "no default route" not in log
     assert "bouncing" not in log
+
+
+def test_healthy_dns_is_left_alone(tmp_path: Path) -> None:
+    """A teardown that didn't break DNS must not toggle the user's accept-dns.
+
+    The self-heal is a real pref change on a live daemon; running it
+    unconditionally would make every disconnect churn DNS.
+    """
+    proc, log, set_args = _run_macos_disconnect(tmp_path, DNS_ALIVE)
+
+    assert proc.returncode == 0, proc.stderr
+    assert set_args == ["--exit-node="]
+    assert "re-applying" not in log
+
+
+def test_stale_resolver_is_healed_by_reapplying_accept_dns(tmp_path: Path) -> None:
+    """The bug this whole path exists for: DNS left on the tunnel's resolver.
+
+    The route is stable throughout — restore_default_route finds nothing wrong —
+    so a teardown that checked only routing would call this disconnect clean.
+    """
+    proc, log, set_args = _run_macos_disconnect(tmp_path, DNS_HEALS_ON_REAPPLY)
+
+    assert proc.returncode == 0, f"rc={proc.returncode} stderr={proc.stderr}"
+    assert set_args == [
+        "--exit-node=",
+        "--accept-dns=false",
+        "--accept-dns=true",
+    ]
+    assert "DNS restored" in log
+    assert "no default route" not in log, "the route was never the problem"
+
+
+def test_dns_that_stays_dead_exits_6_and_says_so(tmp_path: Path) -> None:
+    """Reporting a failed self-heal beats pretending the disconnect was clean."""
+    proc, log, set_args = _run_macos_disconnect(tmp_path, DNS_DEAD)
+
+    assert proc.returncode == 6
+    assert "--accept-dns=true" in set_args, "must have attempted the re-apply"
+    assert "DNS still dead" in log
+    assert "DNS still dead" in proc.stderr

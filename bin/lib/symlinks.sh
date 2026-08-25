@@ -36,6 +36,7 @@ $HOME/.local/bin/bw-node|$DOTFILES_DIR/bin/bw-node|bw-node wrapper
 $HOME/.local/bin/claude-account|$DOTFILES_DIR/bin/claude-account.bash|claude-account launcher
 $HOME/.config/fish/functions/claude.fish|$DOTFILES_DIR/apps/fish/functions/claude.fish|claude fish function
 $HOME/.claude/settings.json|$DOTFILES_DIR/apps/claude-user/settings.json|Claude Code settings
+$HOME/.claude/hooks/gate-pr-skill.py|$DOTFILES_DIR/apps/claude-user/hooks/gate-pr-skill.py|PR-creation gate hook
 $HOME/.claude/CLAUDE.md|$DOTFILES_DIR/claude-guard/user-config/CLAUDE.md|Claude Code global CLAUDE.md
 $HOME/.claude/commands|$DOTFILES_DIR/claude-guard/user-config/skills|Claude Code slash-command dir
 $HOME/.devcontainer|$DOTFILES_DIR/.devcontainer|.devcontainer

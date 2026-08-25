@@ -537,6 +537,18 @@ if $IS_MAC; then
             else
                 fail "Tailscale version skew" "$skew — run: sudo launchctl kickstart -k system/com.$USER.tailscaled"
             fi
+            # The stale-Mullvad-resolver blackhole. tailscale-set-exit-node.bash
+            # self-heals it on the disconnect path, but sleep/wake churn reaches
+            # the same state with no disconnect to hook (an exit node that stops
+            # routing while DNS stays pointed through it), so doctor is the only
+            # backstop for that trigger.
+            if ! tailscale_dns_probe_available; then
+                skip "Tailscale DNS" "dig not installed"
+            elif tailscale_dns_healthy; then
+                pass "Tailscale DNS resolves"
+            else
+                fail "Tailscale DNS" "system resolver answers nothing (stale VPN resolver?) — run: $ts set --accept-dns=false; $ts set --accept-dns=true"
+            fi
             ;;
         eperm)
             fail "Tailscale daemon" "CLI denied access to socket (run: sudo launchctl kickstart -k system/com.$USER.tailscaled)"
