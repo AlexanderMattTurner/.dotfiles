@@ -1,6 +1,6 @@
 ---
 name: writing-tests
-description: How to write, change, or review tests — the load-bearing rule is test real behavior, not source text. Also covers non-vacuity (prove the test can fail), e2e tests that secretly stub the component they name, drift guards as a design smell to name rather than launder, SSOT contract tests that must move with their data, stubs that must drain stdin, and the Python test idioms (repo-root discovery, `exec()`-ing a module's `__main__`, `from __future__ import annotations`) that bite under pytest-xdist. Activate whenever the user asks to write, add, fix, refactor, strengthen, or review tests ("write a test", "add tests", "test this", "regression test", "cover this", "why didn't this test catch it"), or when a coding task's last step is testing the change you just made.
+description: How to write, change, or review tests — the load-bearing rule is test real behavior, not source text. Also covers non-vacuity (prove the test can fail), platform-gated branches that a single-OS CI matrix silently never executes, e2e tests that secretly stub the component they name, drift guards as a design smell to name rather than launder, SSOT contract tests that must move with their data, stubs that must drain stdin, and the Python test idioms (repo-root discovery, `exec()`-ing a module's `__main__`, `from __future__ import annotations`) that bite under pytest-xdist. Activate whenever the user asks to write, add, fix, refactor, strengthen, or review tests ("write a test", "add tests", "test this", "regression test", "cover this", "why didn't this test catch it"), or when a coding task's last step is testing the change you just made.
 ---
 
 # Writing tests
@@ -31,6 +31,36 @@ wording", "handles any of these retryable phrasings") as the behavior under test
 and drive cases from that claim rather than the single input that first triggered
 the bug. "Comment promises more generality than the test exercises" is the
 cheapest reviewer tell for a hollow regression test.
+
+## Platform-gated code is untested until you force the gate open
+
+**A branch behind a platform check never runs in a single-OS CI matrix, and
+nothing turns red to say so.** `if $IS_MAC`, `[[ "$(uname)" == Darwin ]]`,
+`if OS.mac?`, `sys.platform ==` — a green suite means the branch was *skipped*,
+not that it works. Before believing any gated code is covered, read the
+`runs-on:` of the job that actually invokes the suite, then confirm the branch
+executed rather than inferring it from a passing test. A test that completes
+suspiciously fast is the tell: the gated body never ran.
+
+**Force the gate open by stubbing the detector, not just the platform tools.**
+Put a fake `uname` on `PATH` ahead of the real one, alongside stubs for the
+platform-only commands the branch shells out to, and the gated path executes on
+the CI OS. Stub the time source the same way — a no-op `sleep` keeps a polling
+loop's sample windows off the wall clock, so a branch that legitimately waits
+seconds stays cheap to test.
+
+**Stub every platform command that touches the machine, including the ones that
+look read-only.** Anything that notifies the user, power-cycles an interface, or
+writes system state will really do it when the suite runs on the native OS,
+where the gate is open for free. Recording each invocation to a file also turns
+those side effects into assertions — "escalated and notified" and "recovered
+quietly, no notification" are the actual contract of a self-healing path.
+
+**Name the stub set in a comment, because this coverage fails silently.** If the
+code later calls a platform command nobody stubbed, or the detector changes, the
+branch stops executing and every test still passes on the fallback path. Nothing
+goes red when the coverage evaporates, so the stub list has to say what it is
+holding open and why.
 
 ## Never skip or weaken a test unless asked
 

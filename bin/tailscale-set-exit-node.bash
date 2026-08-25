@@ -22,13 +22,23 @@ IS_MAC=$([[ "$(uname)" == "Darwin" ]] && echo true || echo false)
 # families report "network is unreachable"). Reading SC state, not the routing
 # table, dodges the stale utun / OrbStack `!` reject routes that make
 # `route get default` succeed while the machine is actually offline.
+#
+# The awk side must consume scutil's output to the end rather than `exit`-ing on
+# the first match. Under `set -o pipefail` an early awk exit closes the pipe
+# while scutil still has lines buffered, killing it with SIGPIPE (141) — which
+# pipefail reports as a failed pipeline. `sc_primary_interface`'s result is
+# assigned directly (`primary_if="$(sc_primary_interface)"`), so `set -e` would
+# then abort the disconnect mid-run, stranding the machine on a torn-down exit
+# node. It is timing-dependent — invisible whenever scutil finishes writing
+# before awk exits, which is why it has not bitten yet. Keeping the first match
+# and printing it in END is the same result without the early close.
 sc_default_router() {
     printf 'show State:/Network/Global/IPv4\n' | scutil 2>/dev/null |
-        awk '/Router/ {print $NF; exit}'
+        awk '/Router/ && !seen {value = $NF; seen = 1} END {if (seen) print value}'
 }
 sc_primary_interface() {
     printf 'show State:/Network/Global/IPv4\n' | scutil 2>/dev/null |
-        awk '/PrimaryInterface/ {print $NF; exit}'
+        awk '/PrimaryInterface/ && !seen {value = $NF; seen = 1} END {if (seen) print value}'
 }
 
 # True when $1 (a device like en0) is the Wi-Fi interface — the only medium we
