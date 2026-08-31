@@ -1,1 +1,1 @@
-Template updates available for: .hooks/commit-msg .hooks/pre-commit .github/scripts/template-sync.sh .github/workflows/template-sync.yaml .github/workflows/phone-home.yaml .github/workflows/claude.yaml 
+Template updates available for: .claude/skills/writing-tests/SKILL.md .hooks/pre-commit .github/actions/setup-base-env/action.yaml .github/workflows/template-sync.yaml .github/workflows/ci-failure-notify.yaml .github/workflows/claude-review.yaml .github/workflows/phone-home.yaml 
