@@ -1,15 +1,25 @@
 name: "Setup Base Environment"
+<<<<<<< local
 description: "Sets up Node.js with pnpm and caching when the repo has a package.json. Optionally sets up Python with uv."
 # Vendored from alexander-turner/claude-automation-template at dc94850 because
 # template-sync.yaml's SYNC_PATHS doesn't cover .github/actions/. Local change
 # vs upstream: every node/pnpm step is gated on hashFiles('package.json') so
 # this composite is a no-op in non-Node repos (this dotfiles repo). When
 # upstream lands an equivalent guard, re-vendor and drop the divergence.
+||||||| base
+description: "Sets up Node.js with pnpm and caching when a package.json is present (no-op otherwise). Optionally sets up Python with uv."
+=======
+description: "Sets up Node.js with pnpm and caching when a package.json is present, and Python with uv when a pyproject.toml is present. Each half no-ops when its root project file is absent."
+>>>>>>> template
 inputs:
   node-version:
-    description: "Node.js version to use"
+    description: "Node.js version to use. Ignored when node-version-file is set."
     required: false
     default: "22"
+  node-version-file:
+    description: "Path to a file (e.g. .nvmrc) naming the Node.js version, read instead of node-version when set."
+    required: false
+    default: ""
   registry-url:
     description: "npm registry to configure, so publish provenance works"
     required: false
@@ -30,7 +40,9 @@ runs:
       if: hashFiles('package.json') != ''
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
-        node-version: ${{ inputs.node-version }}
+        # setup-node prefers node-version-file only when node-version is empty.
+        node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
+        node-version-file: ${{ inputs.node-version-file }}
         registry-url: ${{ inputs.registry-url }}
 
     - name: Install pnpm
@@ -61,23 +73,51 @@ runs:
       run: pnpm install
       shell: bash
 
+    # The Python half is gated on root scaffolding for the same reason the Node
+    # half above is. `uv python install` and `uv sync` both need a project to
+    # act on, and template-sync delivers neither pyproject.toml nor uv.lock — so
+    # a consumer that never had a Python project would otherwise hard-fail every
+    # workflow that passes setup-python: true, on its very first sync PR.
     - name: Set up uv
+<<<<<<< local
       if: inputs.setup-python == 'true'
       uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+||||||| base
+      if: inputs.setup-python == 'true'
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+=======
+      if: inputs.setup-python == 'true' && hashFiles('pyproject.toml') != ''
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+>>>>>>> template
       with:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
 
     - name: Set up Python
+<<<<<<< local
       if: inputs.setup-python == 'true'
       # Through the environment, not template expansion: an input interpolated
       # straight into a run block is a code-injection path (template-injection).
+||||||| base
+      if: inputs.setup-python == 'true'
+      run: uv python install "$PYTHON_VERSION"
+      shell: bash
+=======
+      if: inputs.setup-python == 'true' && hashFiles('pyproject.toml') != ''
+      run: uv python install "$PYTHON_VERSION"
+      shell: bash
+>>>>>>> template
       env:
         PYTHON_VERSION: ${{ inputs.python-version }}
       run: uv python install "$PYTHON_VERSION"
       shell: bash
 
+    # Needs BOTH files. pyproject.toml because the two steps above install uv
+    # itself only when it is present, so gating on uv.lock alone would run
+    # `uv sync` with no uv on PATH; uv.lock because `--frozen` is an error
+    # without a lockfile. A project with one and not the other still gets uv and
+    # Python, and resolves at `uv run` time.
     - name: Install Python Dependencies
-      if: inputs.setup-python == 'true'
+      if: inputs.setup-python == 'true' && hashFiles('pyproject.toml') != '' && hashFiles('uv.lock') != ''
       run: uv sync --frozen
       shell: bash
