@@ -8,6 +8,19 @@ Include ~/.orbstack/ssh/config
 # Colima writes per-VM Host blocks (lima0, etc.) into this file.
 Include ~/.colima/ssh_config
 
+# LAN probe first. ssh_config uses first-obtained-value, so this MUST precede
+# the Host block below, or the fallback wins unconditionally.
+Match originalhost server exec "/usr/bin/nc -z -G 1 192.168.8.217 22 >/dev/null 2>&1"
+    HostName 192.168.8.217
+
+# Reached only when the probe fails — i.e. you're away from home.
+Host server
+    User server
+    HostName 100.69.106.102
+    ServerAliveInterval 15
+    ServerAliveCountMax 4
+    ConnectTimeout 12
+
 Host *
     # Keychain integration on macOS; IgnoreUnknown keeps Linux ssh quiet.
     IgnoreUnknown UseKeychain
@@ -29,9 +42,3 @@ Host *
     # quietly accept rotated server keys when the server proves ownership of the old one.
     HashKnownHosts yes
     UpdateHostKeys yes
-
-# Personal mac-mini on the LAN. `ssh server` → server@mac-mini with agent forwarding.
-Host server
-    HostName mac-mini
-    User server
-    ForwardAgent yes
