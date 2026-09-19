@@ -42,8 +42,7 @@ tailscale_health() {
 tailscale_version_skew() {
     local client daemon
     client="$("$1" version 2>/dev/null | head -n1)"
-    daemon="$("$1" status --json 2>/dev/null | grep -m1 '"Version"')"
-    daemon="${daemon#*: \"}"
+    daemon="$(_tailscale_json_value "$1" status --json -- Version)"
     daemon="${daemon%%-*}"
     if [ -z "$client" ] || [ -z "$daemon" ] || [ "$client" = "$daemon" ]; then
         return 0
@@ -52,22 +51,41 @@ tailscale_version_skew() {
     return 1
 }
 
-# True when $1 (CLI path) reports an exit node engaged. On this Mac that is a
-# misconfiguration, not a feature: the Homebrew tailscaled's BSD userspace
-# router deletes the physical default route when the exit node is cleared,
-# so doctor flags it before anyone clicks "Disconnect". See CLAUDE.md "VPN".
+# Print the string value of top-level key $N from the pretty-printed JSON that
+# `$1 <args...> -- KEY` emits, e.g. `_tailscale_json_value tailscale status
+# --json -- Version`. Empty when the key is absent, null, or the command fails.
+# awk reads to EOF rather than `exit`ing on the match, so the writer never
+# sees a closed pipe under the caller's `set -o pipefail`.
+_tailscale_json_value() {
+    local cli="$1" key
+    shift
+    local args=()
+    while [ "$1" != -- ]; do
+        args+=("$1")
+        shift
+    done
+    key="$2"
+    "$cli" "${args[@]}" 2>/dev/null |
+        awk -v key="\"$key\"" '
+            $1 == key ":" && !seen {seen = 1; v = $2; sub(/,$/, "", v); gsub(/"/, "", v)}
+            END {print v}'
+}
+
+# True when $1 (CLI path) has an exit node in its *persisted prefs*. On this
+# Mac that is a misconfiguration, not a feature: the Homebrew tailscaled's BSD
+# userspace router deletes the physical default route when the exit node is
+# cleared, so doctor flags it before anyone clicks "Disconnect". See CLAUDE.md
+# "VPN".
 #
-# Reads the `"ExitNodeStatus"` line of `status --json`: `null` when off, an
-# object when on. awk reads to EOF rather than `exit`ing on the match, so the
-# writer never sees a closed pipe under the caller's `set -o pipefail`.
+# Prefs, not `status --json`: a stopped daemon reports no ExitNodeStatus while
+# still carrying the pref that re-engages on the next `tailscale up`. Either
+# field set means engaged; an unreadable daemon reads as off, since the health
+# check already covers that.
 tailscale_exit_node_engaged() {
-    local line
-    line="$("$1" status --json 2>/dev/null |
-        awk '/"ExitNodeStatus"/ && !seen {v = $0; seen = 1} END {print v}')"
-    case "$line" in
-    "" | *null*) return 1 ;;
-    *) return 0 ;;
-    esac
+    local id ip
+    id="$(_tailscale_json_value "$1" debug prefs -- ExitNodeID)"
+    ip="$(_tailscale_json_value "$1" debug prefs -- ExitNodeIP)"
+    [ -n "$id$ip" ]
 }
 
 # Print absolute path to a working tailscale CLI; non-zero if none found.

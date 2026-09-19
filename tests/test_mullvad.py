@@ -8,15 +8,17 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 DOTFILES = Path(
     subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 )
 MULLVAD_SH = DOTFILES / "bin" / "lib" / "mullvad.sh"
 
 
-def _stub(tmp_path: Path, stdout: str) -> Path:
+def _stub(tmp_path: Path, stdout: str, rc: int = 0) -> Path:
     stub = tmp_path / "mullvad"
-    stub.write_text(f'#!/bin/sh\ncat <<"MV_EOF"\n{stdout}\nMV_EOF\n')
+    stub.write_text(f'#!/bin/sh\ncat <<"MV_EOF"\n{stdout}\nMV_EOF\nexit {rc}\n')
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     return stub
 
@@ -43,11 +45,21 @@ def test_find_mullvad_fails_when_app_absent(tmp_path: Path) -> None:
     assert _run("find_mullvad", tmp_path / "no-such-mullvad").returncode != 0
 
 
-def test_autoconnect_on(tmp_path: Path) -> None:
-    stub = _stub(tmp_path, "Autoconnect: on")
-    assert _run('mullvad_autoconnect_enabled "$MULLVAD_CLI"', stub).returncode == 0
-
-
-def test_autoconnect_off(tmp_path: Path) -> None:
-    stub = _stub(tmp_path, "Autoconnect: off")
-    assert _run('mullvad_autoconnect_enabled "$MULLVAD_CLI"', stub).returncode != 0
+# Real CLI output for each state; the daemon-down text is what the CLI prints
+# (exit 1) when the management socket is unreachable.
+@pytest.mark.parametrize(
+    "stdout,rc,expected",
+    [
+        ("Autoconnect: on", 0, "on"),
+        ("Autoconnect: off", 0, "off"),
+        ("Error: Management RPC server or client error", 1, "no-daemon"),
+        ("", 0, "no-daemon"),
+    ],
+)
+def test_autoconnect_classification(
+    tmp_path: Path, stdout: str, rc: int, expected: str
+) -> None:
+    stub = _stub(tmp_path, stdout, rc)
+    proc = _run('mullvad_autoconnect "$MULLVAD_CLI"', stub)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == expected

@@ -134,17 +134,24 @@ def test_version_skew_unreadable_daemon_is_silent(tmp_path: Path) -> None:
     assert proc.stdout.strip() == ""
 
 
-def _exit_node(tmp_path: Path, status_json: str) -> int:
-    """Run tailscale_exit_node_engaged against a stub serving `status --json`."""
+def _exit_node(tmp_path: Path, prefs_json: str | None) -> int:
+    """Run tailscale_exit_node_engaged against a stub serving `debug prefs`.
+
+    `prefs_json=None` makes the stub fail outright (daemon down): the check
+    must read that as "off", since the health check already covers it.
+    """
     stub = tmp_path / "tailscale"
-    stub.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1 $2" = "status --json" ]; then\n'
-        f"  cat <<'TS_EOF'\n{status_json}\nTS_EOF\n"
-        "  exit 0\n"
-        "fi\n"
-        "exit 3\n"
-    )
+    if prefs_json is None:
+        stub.write_text("#!/bin/sh\nexit 1\n")
+    else:
+        stub.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1 $2" = "debug prefs" ]; then\n'
+            f"  cat <<'TS_EOF'\n{prefs_json}\nTS_EOF\n"
+            "  exit 0\n"
+            "fi\n"
+            "exit 3\n"
+        )
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     return subprocess.run(
         [
@@ -161,32 +168,29 @@ def _exit_node(tmp_path: Path, status_json: str) -> int:
     ).returncode
 
 
-# Abridged real `tailscale status --json` shapes for the ExitNodeStatus field.
-EXIT_ON = """{
-  "BackendState": "Running",
-  "ExitNodeStatus": {
-    "ID": "n29MTCT3iQ11CNTRL",
-    "Online": true
-  },
-  "Peer": {}
-}"""
-
-EXIT_OFF = """{
-  "BackendState": "Running",
-  "ExitNodeStatus": null,
-  "Peer": {}
-}"""
+def _prefs(exit_id: str, exit_ip: str) -> str:
+    """Abridged real `tailscale debug prefs` with the two exit-node fields."""
+    return (
+        "{\n"
+        '  "ControlURL": "https://controlplane.tailscale.com",\n'
+        '  "CorpDNS": true,\n'
+        f'  "ExitNodeID": "{exit_id}",\n'
+        f'  "ExitNodeIP": "{exit_ip}",\n'
+        '  "ExitNodeAllowLANAccess": true\n'
+        "}"
+    )
 
 
-def test_exit_node_engaged(tmp_path: Path) -> None:
-    assert _exit_node(tmp_path, EXIT_ON) == 0
-
-
-def test_exit_node_off(tmp_path: Path) -> None:
-    assert _exit_node(tmp_path, EXIT_OFF) != 0
-
-
-def test_exit_node_unreadable_daemon_reads_as_off(tmp_path: Path) -> None:
-    # No status at all (daemon down) must not FAIL doctor's exit-node check on
-    # top of the daemon check that already covers it.
-    assert _exit_node(tmp_path, "") != 0
+@pytest.mark.parametrize(
+    "prefs_json,engaged",
+    [
+        (_prefs("n29MTCT3iQ11CNTRL", ""), True),
+        (_prefs("", "100.117.167.110"), True),
+        (_prefs("", ""), False),
+        (None, False),
+    ],
+)
+def test_exit_node_engaged(
+    tmp_path: Path, prefs_json: str | None, engaged: bool
+) -> None:
+    assert (_exit_node(tmp_path, prefs_json) == 0) is engaged

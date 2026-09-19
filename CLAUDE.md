@@ -409,8 +409,9 @@ After it, `route get 1.1.1.1` says "not in table", every dial fails with
 Re-engaging the exit node makes it worse (the add now succeeds, so
 `default` lands on `utun0` with no underlying path to the exit node).
 Nothing re-adds the route until DHCP re-runs — hence only a Wi-Fi
-bounce or a reboot ever fixed it. Reported upstream; until it is fixed
-the Homebrew build cannot safely clear an exit node on this OS.
+bounce or a reboot ever fixed it. Reported upstream (tailscale/tailscale;
+link the issue here once filed); until it is fixed the Homebrew build
+cannot safely clear an exit node on this OS.
 
 The DNS story (tailscaled pointing macOS at Mullvad's resolver
 `194.242.2.2` through `100.100.100.100`) is real but downstream of the

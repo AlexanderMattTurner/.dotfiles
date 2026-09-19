@@ -286,9 +286,8 @@ if [ "$(uname)" = "Darwin" ]; then
     unset needs_bootstrap
 
     # `brew upgrade tailscale` swaps the CLI binary but leaves the old
-    # tailscaled running under launchd. A skewed pair mishandles exit-node
-    # teardown — disconnecting blackholes all traffic. Kickstart the daemon
-    # so it respawns on the current binary. Idempotent: no-op when matched.
+    # tailscaled running under launchd. Kickstart the daemon so it respawns
+    # on the current binary. Idempotent: no-op when matched.
     # shellcheck source=bin/lib/tailscale-resolve.sh disable=SC1091
     source "$DOTFILES_DIR/bin/lib/tailscale-resolve.sh"
     if ts_bin="$(find_tailscale)"; then
@@ -319,6 +318,7 @@ if [ "$(uname)" = "Darwin" ]; then
         status_msg "Removing retired tailscale-exit-node launch agent"
         launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
         rm -f "$TS_EXIT_PLIST_DEST"
+        rm -rf "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
     fi
 
     # Duplicati: the daily offsite backup. Its LaunchAgent is tracked here

@@ -24,8 +24,8 @@ repos:
     hooks:
       - id: shfmt
         args: [-w, -i, "4"]
-        # Mirror the explicit file list from the old bin/lint.bash check_shfmt
-        # so a stray .bash under apps/ doesn't get reformatted without intent.
+        # Explicit list, not `**/*.bash`: files the repo does not own
+        # (template-synced, app plugins) must not be reformatted.
         files: ^(\.bashrc|setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash)|\.claude/hooks/.*\.bash|\.devcontainer/.*\.bash)$
 
   - repo: https://github.com/shellcheck-py/shellcheck-py

@@ -480,6 +480,16 @@ if $IS_MAC; then
         skip "ccr launch agent" "$CCR_PLIST not present"
     fi
 
+    # setup.bash evicts the retired exit-node login agent on every run; if it
+    # is back, something re-rendered it and the next login re-engages the
+    # exit node whose teardown deletes the default route (CLAUDE.md "VPN").
+    TS_EXIT_PLIST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
+    if [[ -f "$TS_EXIT_PLIST" ]]; then
+        fail "retired tailscale-exit-node agent" "$TS_EXIT_PLIST still installed (run setup.bash)"
+    else
+        pass "retired tailscale-exit-node agent absent"
+    fi
+
     # brew-autoupdate's background job sudos via this NOPASSWD fragment
     # (setup.bash renders + installs it). Skip, not fail: it needs sudo to
     # install, so a --link-only bootstrap legitimately won't have it yet.
@@ -530,7 +540,9 @@ if $IS_MAC; then
             # anyone clicks "Disconnect". Clearing it needs a Wi-Fi bounce to
             # get the DHCP default route back, hence the two-step remedy.
             if tailscale_exit_node_engaged "$ts"; then
-                fail "Tailscale exit node engaged" "egress belongs to the Mullvad app — run: $ts set --exit-node= ; networksetup -setairportpower en0 off; networksetup -setairportpower en0 on"
+                wifi_if="$(networksetup -listallhardwareports 2>/dev/null |
+                    awk '/^Hardware Port: Wi-Fi/ {getline; print $2}')"
+                fail "Tailscale exit node engaged" "egress belongs to the Mullvad app — run: $ts set --exit-node= && networksetup -setairportpower ${wifi_if:-<wifi-interface>} off && networksetup -setairportpower ${wifi_if:-<wifi-interface>} on"
             else
                 pass "Tailscale exit node off"
             fi
@@ -564,13 +576,13 @@ if $IS_MAC; then
 
     # shellcheck source=lib/mullvad.sh disable=SC1091
     source "$DOTFILES_DIR/bin/lib/mullvad.sh"
-    if mv="$(find_mullvad)"; then
-        pass "Mullvad CLI ($mv)"
-        if mullvad_autoconnect_enabled "$mv"; then
-            pass "Mullvad auto-connect on"
-        else
-            fail "Mullvad auto-connect" "off — machine boots in the clear (run: mullvad auto-connect set on)"
-        fi
+    if mullvad_cli="$(find_mullvad)"; then
+        pass "Mullvad CLI ($mullvad_cli)"
+        case "$(mullvad_autoconnect "$mullvad_cli")" in
+        on) pass "Mullvad auto-connect on" ;;
+        off) fail "Mullvad auto-connect" "off — machine boots in the clear (run: \"$mullvad_cli\" auto-connect set on)" ;;
+        *) fail "Mullvad daemon" "CLI cannot reach the daemon — open Mullvad VPN.app, or run: sudo launchctl kickstart -k system/net.mullvad.daemon" ;;
+        esac
     else
         skip "Mullvad VPN" "Mullvad VPN.app not installed (brew install --cask mullvad-vpn)"
     fi

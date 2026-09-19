@@ -428,7 +428,12 @@ end
 # deletes the physical default route (CLAUDE.md "VPN"). The app bundles its
 # CLI off PATH; bin/lib/mullvad.sh is the bash-side resolver of the same path.
 function mullvad --description 'Mullvad VPN app CLI'
-    "/Applications/Mullvad VPN.app/Contents/Resources/mullvad" $argv
+    set -l cli "/Applications/Mullvad VPN.app/Contents/Resources/mullvad"
+    if not test -x $cli
+        echo "mullvad: Mullvad VPN.app not installed (brew install --cask mullvad-vpn)" >&2
+        return 127
+    end
+    $cli $argv
 end
 
 # `brew services start tailscale` registers homebrew.mxcl.tailscale, a second
