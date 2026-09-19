@@ -20,13 +20,16 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   settings, wrapper scripts, Venice/ccr routing, and the ccr
   LaunchAgent plist. `.claude/` in this repo is symlinks into this
   directory.
-  - `hooks/monitor.bash` — AI safety "trusted monitor" PreToolUse hook.
-    Sends each tool call to a cheap/OSS model for review before
-    execution (the "AI control" pattern). Auto-detects provider from
-    available API keys: Anthropic (Haiku) or Venice (qwen3-coder-480b /
-    OSS). Skips Read by default. Logs decisions to
-    `~/.cache/claude-monitor/monitor.jsonl`. Disable with
-    `MONITOR_DISABLED=1`.
+  - `.claude/hooks/monitor.py` + `.claude/hooks/monitorlib/` — AI
+    safety "trusted monitor" PreToolUse hook. Sends each tool call to a
+    cheap/OSS model for review before execution (the "AI control"
+    pattern). Launched via `monitor-launch.bash` and
+    `monitor-dispatch.bash`. Providers and their key env vars come from
+    `.claude/hooks/monitor-providers.json`, the SSOT — Anthropic and
+    Venice today. Logs decisions to
+    `~/.cache/claude-monitor/monitor.jsonl` (`MONITOR_LOG`), and reads
+    its policy prompt from `/etc/claude-monitor/policy.txt`
+    (`MONITOR_POLICY`).
   - `hooks/notify.bash` — cross-platform desktop notification for the
     Notification lifecycle hook.
   - `hooks/statusline.bash` — shows model, branch, context usage, and
@@ -264,30 +267,33 @@ installable from the session by hand.
 
 ### Trusted infrastructure protection
 
-The AI safety monitor (`monitor.bash`), its policy prompt, audit
-log, and ntfy config must be unreadable and unmodifiable by the
-monitored model. If the model can read the monitor, it can find
+The AI safety monitor (`.claude/hooks/monitor.py` and its
+`monitorlib/` package), its policy prompt, audit log, and ntfy config
+must be unreadable and unmodifiable by the monitored model. If the model can read the monitor, it can find
 parsing vulnerabilities or learn which patterns are flagged and
 tailor actions to evade detection.
 
 **Defense layers (devcontainer):**
 
 1. **Root ownership (kernel-enforced).**
-   `harden-monitor.bash` sets `monitor.bash` to `root:root 700`
+   `.devcontainer/harden-monitor.bash` sets `monitor.py` to
+   `root:root 700` and `monitorlib/` to `root:root` `go-rwx`
    (unreadable by the `node` user Claude runs as), the policy prompt
    at `/etc/claude-monitor/policy.txt` to `root:root 600`, and the
-   log directory to `root:root 1733` (append-only for non-root).
+   log directory to `root:root 1733` (append-only for non-root). It
+   also records a checksum at `/etc/claude-monitor/monitor.sha256`
+   (mode 444).
 
-2. **Dispatch wrapper.**  Bash scripts must be readable to execute,
-   so `settings.json` points to `monitor-dispatch.bash` — a tiny
-   readable wrapper that `sudo`s into the real script. The model can
-   read the 8-line dispatch but learns nothing about detection logic.
+2. **Dispatch wrapper.**  Shell scripts must be readable to execute,
+   so `settings.json` points to `monitor-dispatch.bash`, a readable
+   wrapper that routes to the devcontainer sidecar or delegates to the
+   root-owned `monitor.py`. The model can read the dispatch but learns
+   nothing about detection logic — that lives in `monitorlib/`.
 
 3. **Deny rules (defense in depth).** `settings.json` denies
-   `Read(.claude/hooks/monitor.bash)` and
-   `Read(/etc/claude-monitor/**)`. These are glob patterns and
-   trivially bypassable — they exist only to catch accidental reads,
-   not as a security boundary.
+   `Read(/run/monitor-secret/**)`. Glob patterns are trivially
+   bypassable, so they catch accidental reads only and are not a
+   security boundary; the root ownership in layer 1 is.
 
 4. **`IS_SANDBOX=no`** in `devcontainer.json` keeps the monitor
    active inside the container (the Anthropic cloud sets
