@@ -410,10 +410,10 @@ After it, `route get 1.1.1.1` says "not in table", every dial fails with
 Re-engaging the exit node makes it worse (the add now succeeds, so
 `default` lands on `utun0` with no underlying path to the exit node).
 Nothing re-adds the route until DHCP re-runs — hence only a Wi-Fi
-bounce or a reboot ever fixed it. Not yet filed upstream as of
-2026-09-19 (link the tailscale/tailscale issue here when it is); until
-it is fixed the Homebrew build cannot safely clear an exit node on this
-OS.
+bounce or a reboot ever fixed it. Reported upstream as
+tailscale/tailscale#21395
+(https://github.com/tailscale/tailscale/issues/21395); until it is
+fixed the Homebrew build cannot safely clear an exit node on this OS.
 
 The DNS story (tailscaled pointing macOS at Mullvad's resolver
 `194.242.2.2` through `100.100.100.100`) is real but downstream of the
