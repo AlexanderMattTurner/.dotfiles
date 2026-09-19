@@ -309,24 +309,17 @@ if [ "$(uname)" = "Darwin" ]; then
     launchctl bootout "gui/$(id -u)" "$CCR_PLIST_DEST" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$CCR_PLIST_DEST" 2>/dev/null || true
 
-    # Tailscale exit-node applier: reasserts the configured Mullvad exit node
-    # at login, retrying while tailscaled finishes its handshake.
-    # The plist bakes in absolute /Users/$USER paths, so render it from the
-    # __USERNAME__ template — same convention as tailscaled/sudoers above.
+    # The Tailscale exit-node login agent is retired: egress is the Mullvad
+    # app, and clearing a Tailscale exit node deletes the physical default
+    # route (CLAUDE.md "VPN"). Evict the rendered agent from machines that
+    # still carry it — same evict-on-every-run shape as the homebrew
+    # tailscaled plist above, and a no-op once it is gone.
     TS_EXIT_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
-    mkdir -p "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
-    TS_EXIT_PLIST_RENDERED="$(mktemp)"
-    trap 'rm -f "$TS_EXIT_PLIST_RENDERED"' EXIT
-    sed "s/__USERNAME__/$ESCAPED_USER/g" \
-        "$DOTFILES_DIR/launchagents/com.turntrout.tailscale-exit-node.plist.template" \
-        >"$TS_EXIT_PLIST_RENDERED"
-    if [ ! -f "$TS_EXIT_PLIST_DEST" ] || ! cmp -s "$TS_EXIT_PLIST_RENDERED" "$TS_EXIT_PLIST_DEST"; then
-        install -m 0644 "$TS_EXIT_PLIST_RENDERED" "$TS_EXIT_PLIST_DEST"
+    if [ -f "$TS_EXIT_PLIST_DEST" ]; then
+        status_msg "Removing retired tailscale-exit-node launch agent"
+        launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
+        rm -f "$TS_EXIT_PLIST_DEST"
     fi
-    rm -f "$TS_EXIT_PLIST_RENDERED"
-    trap - EXIT
-    launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
 
     # Duplicati: the daily offsite backup. Its LaunchAgent is tracked here
     # rather than living only in ~/Library/LaunchAgents so a rebuilt machine

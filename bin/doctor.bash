@@ -480,18 +480,6 @@ if $IS_MAC; then
         skip "ccr launch agent" "$CCR_PLIST not present"
     fi
 
-    TS_EXIT_PLIST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
-    if [[ -f "$TS_EXIT_PLIST" ]]; then
-        launchd_list_out="$(launchctl list 2>/dev/null)"
-        if [[ "$launchd_list_out" == *com.turntrout.tailscale-exit-node* ]]; then
-            pass "tailscale-exit-node launch agent loaded"
-        else
-            fail "tailscale-exit-node launch agent" "plist installed but not loaded (run: launchctl bootstrap gui/$(id -u) $TS_EXIT_PLIST)"
-        fi
-    else
-        skip "tailscale-exit-node launch agent" "$TS_EXIT_PLIST not present"
-    fi
-
     # brew-autoupdate's background job sudos via this NOPASSWD fragment
     # (setup.bash renders + installs it). Skip, not fail: it needs sudo to
     # install, so a --link-only bootstrap legitimately won't have it yet.
@@ -530,24 +518,21 @@ if $IS_MAC; then
         case "$(tailscale_health "$ts")" in
         ok | stopped)
             pass "Tailscale daemon reachable"
-            # Skewed CLI↔daemon (brew upgrade without daemon restart) has
-            # blackholed traffic on exit-node disconnect.
+            # Skewed CLI↔daemon (brew upgrade without daemon restart).
             if skew="$(tailscale_version_skew "$ts")"; then
                 pass "Tailscale CLI/daemon versions match"
             else
                 fail "Tailscale version skew" "$skew — run: sudo launchctl kickstart -k system/com.$USER.tailscaled"
             fi
-            # The stale-Mullvad-resolver blackhole. tailscale-set-exit-node.bash
-            # self-heals it on the disconnect path, but sleep/wake churn reaches
-            # the same state with no disconnect to hook (an exit node that stops
-            # routing while DNS stays pointed through it), so doctor is the only
-            # backstop for that trigger.
-            if ! tailscale_dns_probe_available; then
-                skip "Tailscale DNS" "dig not installed"
-            elif tailscale_dns_healthy; then
-                pass "Tailscale DNS resolves"
+            # Egress is the Mullvad app. An engaged Tailscale exit node is a
+            # loaded gun: clearing it makes this tailscaled delete the
+            # physical default route (CLAUDE.md "VPN"), so flag it before
+            # anyone clicks "Disconnect". Clearing it needs a Wi-Fi bounce to
+            # get the DHCP default route back, hence the two-step remedy.
+            if tailscale_exit_node_engaged "$ts"; then
+                fail "Tailscale exit node engaged" "egress belongs to the Mullvad app — run: $ts set --exit-node= ; networksetup -setairportpower en0 off; networksetup -setairportpower en0 on"
             else
-                fail "Tailscale DNS" "system resolver answers nothing (stale VPN resolver?) — run: $ts set --accept-dns=false; $ts set --accept-dns=true"
+                pass "Tailscale exit node off"
             fi
             ;;
         eperm)
@@ -557,8 +542,8 @@ if $IS_MAC; then
             fail "Tailscale daemon" "daemon not running (run: sudo launchctl bootstrap system $TAILSCALE_PLIST)"
             ;;
         logged-out)
-            # Logged out is NOT healthy: the exit-node applier can't engage
-            # and `tailscale set` fails with misleading errors until re-auth.
+            # Logged out is NOT healthy: the tailnet (ssh to mac-mini) is gone
+            # and `tailscale` commands fail with misleading errors until re-auth.
             fail "Tailscale login" "daemon up but logged out (run: tailscale up)"
             ;;
         *)
@@ -569,6 +554,25 @@ if $IS_MAC; then
     SHIM=/usr/local/bin/tailscale
     if [[ -e "$SHIM" ]] && ! "$SHIM" version >/dev/null 2>&1; then
         fail "tailscale shim" "$SHIM is broken (App Store Tailscale uninstalled) — sudo rm $SHIM"
+    fi
+
+    # ── VPN ─────────────────────────────────────────────────────────────────
+    # The Mullvad app is the egress VPN; Tailscale is the tailnet only. The
+    # invariant that matters at login is auto-connect: without it the machine
+    # boots in the clear until someone opens the app. See CLAUDE.md "VPN".
+    section "VPN"
+
+    # shellcheck source=lib/mullvad.sh disable=SC1091
+    source "$DOTFILES_DIR/bin/lib/mullvad.sh"
+    if mv="$(find_mullvad)"; then
+        pass "Mullvad CLI ($mv)"
+        if mullvad_autoconnect_enabled "$mv"; then
+            pass "Mullvad auto-connect on"
+        else
+            fail "Mullvad auto-connect" "off — machine boots in the clear (run: mullvad auto-connect set on)"
+        fi
+    else
+        skip "Mullvad VPN" "Mullvad VPN.app not installed (brew install --cask mullvad-vpn)"
     fi
 
     # ── Backups ─────────────────────────────────────────────────────────────

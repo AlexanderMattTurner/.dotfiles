@@ -25,8 +25,7 @@ repos:
       - id: shfmt
         args: [-w, -i, "4"]
         # Mirror the explicit file list from the old bin/lint.bash check_shfmt
-        # so a stray .bash under apps/ (e.g. apps/swiftbar/vpn.10s.bash) doesn't
-        # get reformatted without intent.
+        # so a stray .bash under apps/ doesn't get reformatted without intent.
         files: ^(\.bashrc|setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash)|\.claude/hooks/.*\.bash|\.devcontainer/.*\.bash)$
 
   - repo: https://github.com/shellcheck-py/shellcheck-py

@@ -424,30 +424,12 @@ if status is-interactive; and type -q bw
     _bw_envchain_autosync 2>/dev/null
 end
 
-# Tailscale's Mullvad exit node — choice persists in daemon prefs across reboots.
-# Routes set/clear through tailscale-set-exit-node.bash so the exit-node list
-# and daemon health checks live in one place (bin/lib/tailscale-resolve.sh).
-function mullvad --description 'Switch Tailscale Mullvad exit node'
-    if test (count $argv) -eq 0
-        echo "usage: mullvad [ca|jp|us|off|ls|st]" >&2
-        return 1
-    end
-    switch $argv[1]
-        case ls list
-            tailscale exit-node list
-        case st status
-            tailscale status | head -3
-        case '*'
-            if bash "$DOTFILES_DIR/bin/tailscale-set-exit-node.bash" "$argv[1]"
-                tailscale status | head -3
-            end
-    end
+# Egress VPN is the Mullvad app — never a Tailscale exit node, whose teardown
+# deletes the physical default route (CLAUDE.md "VPN"). The app bundles its
+# CLI off PATH; bin/lib/mullvad.sh is the bash-side resolver of the same path.
+function mullvad --description 'Mullvad VPN app CLI'
+    "/Applications/Mullvad VPN.app/Contents/Resources/mullvad" $argv
 end
-
-abbr -a mvca 'mullvad ca'
-abbr -a mvjp 'mullvad jp'
-abbr -a mvus 'mullvad us'
-abbr -a mvoff 'mullvad off'
 
 # `brew services start tailscale` registers homebrew.mxcl.tailscale, a second
 # tailscaled that races com.$USER.tailscaled on /var/run/tailscaled.socket and
@@ -461,7 +443,7 @@ function brew --wraps brew --description 'Guard against starting homebrew tailsc
         for action in start run restart load
             if contains -- $action $argv
                 echo "brew: refusing to start homebrew's tailscale service — it races com.$USER.tailscaled on /var/run/tailscaled.socket." >&2
-                echo "      tailscaled already runs via our LaunchDaemon; pick an exit node with: mullvad ca|us|jp|off" >&2
+                echo "      tailscaled already runs via our LaunchDaemon (egress VPN is the Mullvad app)." >&2
                 return 1
             end
         end
