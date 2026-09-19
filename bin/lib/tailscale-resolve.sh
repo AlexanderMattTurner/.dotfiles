@@ -168,10 +168,16 @@ tailscale_dns_reapply() {
 }
 
 # Print the interface carrying the kernel's physical IPv4 default route: a
-# `default` row in `netstat -rn` whose interface is not a utun (the exit-node
-# tunnel) and whose flags are not reject/blackhole (OrbStack's `!` bridges make
-# `route get default` succeed while the machine is offline). Empty + non-zero
-# when there is none — the exit-node-teardown blackhole.
+# `default` row in `netstat -rn` on an `en*` interface (Wi-Fi, Ethernet, USB
+# adapters — every medium macOS can actually egress on) whose flags are not
+# reject/blackhole. Empty + non-zero when there is none — the exit-node-
+# teardown blackhole.
+#
+# Interface allowlist, not a utun denylist: OrbStack, Docker, and VM stacks
+# leave `default … bridge100` / `vmnet*` rows behind that make `route get
+# default` succeed while the machine is offline, and a denylist would have to
+# chase every one of them. The trailing `!` marker is *not* the signal — the
+# healthy en0 link routes carry it too.
 #
 # The routing *table*, not SystemConfiguration. On 2026-09-19
 # `State:/Network/Global/IPv4` still reported `Router : 192.168.8.1` while the
@@ -182,11 +188,11 @@ tailscale_dns_reapply() {
 # teardown, and its absence is the failure in both the on and off states.
 #
 # Column 4 is Netif on macOS (Destination Gateway Flags Netif Expire); `$NF`
-# is wrong because rows can carry a trailing `!` marker.
+# is wrong because rows can carry that trailing `!`.
 tailscale_physical_default_route() {
     local ifc
     ifc="$(netstat -rn -f inet 2>/dev/null |
-        awk '$1 == "default" && $3 !~ /[RB]/ && $4 !~ /^utun/ && !seen {ifc = $4; seen = 1}
+        awk '$1 == "default" && $3 !~ /[RB]/ && $4 ~ /^en[0-9]+$/ && !seen {ifc = $4; seen = 1}
              END {if (seen) print ifc}')"
     [ -n "$ifc" ] || return 1
     printf '%s\n' "$ifc"

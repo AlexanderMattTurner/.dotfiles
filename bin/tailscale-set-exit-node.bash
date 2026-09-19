@@ -115,10 +115,16 @@ route_appears_within() {
 # pretending the disconnect succeeded.
 restore_default_route() {
     local primary="$1" _
-    # Give tailscaled + macOS the teardown window, then demand stability.
-    if route_appears_within 10 && route_stable_for 6; then
-        return 0
-    fi
+    # Give tailscaled + macOS the teardown window, then demand stability. A
+    # route that appears and then blinks while macOS promotes it is not a
+    # blackhole, so retry the whole window before reaching for the bounce,
+    # which costs the user their Wi-Fi link.
+    for _ in 1 2 3; do
+        if route_appears_within 8 && route_stable_for 4; then
+            return 0
+        fi
+        log "default route blinked during teardown; re-checking"
+    done
     log "disconnect blackholed the default route; bouncing ${primary:-unknown}"
     if ! bounce_interface "$primary"; then
         notify_blackhole "$primary"

@@ -421,6 +421,15 @@ Destination        Gateway            Flags               Netif Expire
 default            link#20            UCSRg              bridge100
 """
 
+# The same stale OrbStack row without a reject flag, plus the tunnel. Neither
+# is a medium the machine can egress on; a utun denylist would accept it.
+ROUTES_VIRTUAL_ONLY = """\
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            utun0              UScg                utun0
+default            link#20            UCSI               bridge100      !
+"""
+
 
 def _route(tmp_path: Path, table: str) -> subprocess.CompletedProcess[str]:
     _stub(tmp_path, "netstat", f'#!/bin/sh\ncat <<"EOF"\n{table}EOF\n')
@@ -450,6 +459,11 @@ def test_route_absent_in_the_blackhole(tmp_path: Path) -> None:
 
 def test_route_ignores_reject_defaults(tmp_path: Path) -> None:
     assert _route(tmp_path, ROUTES_REJECT_ONLY).returncode == 1
+
+
+def test_route_ignores_virtual_bridge_defaults(tmp_path: Path) -> None:
+    """A `bridge100` default is not a way out of the machine."""
+    assert _route(tmp_path, ROUTES_VIRTUAL_ONLY).returncode == 1
 
 
 def test_route_absent_when_netstat_is_missing(tmp_path: Path) -> None:

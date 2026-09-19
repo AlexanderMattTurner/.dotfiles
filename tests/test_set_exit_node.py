@@ -146,6 +146,8 @@ DNS_HEALS_ON_REAPPLY = "heals"
 ROUTE_ALIVE = "alive"
 ROUTE_DEAD = "dead"
 ROUTE_HEALS_ON_BOUNCE = "heals"
+# Present, then absent for one sample while macOS promotes it, then present.
+ROUTE_BLINKS = "blinks"
 
 ROUTE_ROW = "default            192.168.1.1        UGScg                 en0"
 # `!`-marked rows are what a `$NF`-based reader would misparse as an interface.
@@ -199,6 +201,14 @@ def _run_macos_disconnect(
         )
     elif route == ROUTE_DEAD:
         netstat_body = f'#!/bin/sh\ncat <<"EOF"\n{ROUTE_FILLER}\nEOF\n'
+    elif route == ROUTE_BLINKS:
+        counter = tmp_path / "netstat-calls"
+        netstat_body = (
+            f'#!/bin/sh\nn=$(cat "{counter}" 2>/dev/null || echo 0); n=$((n + 1))\n'
+            f'echo "$n" >"{counter}"\n'
+            f'[ "$n" -ne 3 ] && echo "{ROUTE_ROW}"\n'
+            f'cat <<"EOF"\n{ROUTE_FILLER}\nEOF\n'
+        )
     else:
         netstat_body = (
             f'#!/bin/sh\n[ -f "{route_healed}" ] && echo "{ROUTE_ROW}"\n'
@@ -227,7 +237,7 @@ def _run_macos_disconnect(
             "esac\n"
         ),
     }
-    if route != ROUTE_ALIVE:
+    if route not in (ROUTE_ALIVE, ROUTE_BLINKS):
         stubs["networksetup"] = NETWORKSETUP_STUB.format(
             bounces=bounces, healed=route_healed
         )
@@ -379,3 +389,13 @@ def test_both_halves_run_even_when_the_route_fails(tmp_path: Path) -> None:
     assert proc.returncode == 5
     assert "--accept-dns=true" in set_args
     assert "DNS restored" in log
+
+
+def test_route_blink_during_teardown_does_not_bounce(tmp_path: Path) -> None:
+    """A route that appears, blinks once while macOS promotes it, and returns
+    is a normal teardown. `networksetup` is absent, so a bounce would exit 5."""
+    proc, log, _ = _run_macos_disconnect(tmp_path, DNS_ALIVE, ROUTE_BLINKS)
+
+    assert proc.returncode == 0, f"rc={proc.returncode} stderr={proc.stderr}"
+    assert "blinked" in log
+    assert "bouncing" not in log
