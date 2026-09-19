@@ -484,7 +484,7 @@ if $IS_MAC; then
     # is back, something re-rendered it and the next login re-engages the
     # exit node whose teardown deletes the default route (CLAUDE.md "VPN").
     TS_EXIT_PLIST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
-    if [[ -f "$TS_EXIT_PLIST" ]]; then
+    if [[ -e "$TS_EXIT_PLIST" || -L "$TS_EXIT_PLIST" ]]; then
         fail "retired tailscale-exit-node agent" "$TS_EXIT_PLIST still installed (run setup.bash)"
     else
         pass "retired tailscale-exit-node agent absent"

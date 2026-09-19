@@ -81,6 +81,32 @@ done < <(repo_hook_symlinks)
 # prompt — which can't run on the --link-only path.
 bash "$DOTFILES_DIR/bin/lib/stale-symlinks.sh" --prune
 
+# Retired artifacts of the Tailscale exit-node stack (egress is the Mullvad
+# app now; clearing a Tailscale exit node deletes the default route, see
+# CLAUDE.md "VPN"). Both lived only on machines set up before that change,
+# and neither is reachable by the generic reconcile above: the SwiftBar link
+# was the sole managed entry under ~/.config/swiftbar, so the stale-symlink
+# scan no longer visits that directory; and the login agent is a rendered
+# file, not a symlink. Runs before the --link-only return because that is
+# the documented update path for an existing Mac. No-op once both are gone.
+if [ "$(uname)" = "Darwin" ]; then
+    RETIRED_SWIFTBAR_LINK="$HOME/.config/swiftbar/vpn.10s.bash"
+    if [ -L "$RETIRED_SWIFTBAR_LINK" ] &&
+        [[ "$(readlink "$RETIRED_SWIFTBAR_LINK")" == "$DOTFILES_DIR"/* ]]; then
+        status_msg "Removing retired SwiftBar vpn plugin link"
+        rm -f "$RETIRED_SWIFTBAR_LINK"
+    fi
+    # -e || -L: older setups symlinked the plist, and once its source is
+    # deleted that link dangles, which a plain -f test would miss.
+    TS_EXIT_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
+    if [ -e "$TS_EXIT_PLIST_DEST" ] || [ -L "$TS_EXIT_PLIST_DEST" ]; then
+        status_msg "Removing retired tailscale-exit-node launch agent"
+        launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
+        rm -f "$TS_EXIT_PLIST_DEST"
+        rm -rf "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
+    fi
+fi
+
 [[ -f "$HOME/.extras.bash" ]] || touch "$HOME/.extras.bash"
 [[ -f "$HOME/.extras.fish" ]] || touch "$HOME/.extras.fish"
 [[ -f "$HOME/.hushlogin" ]] || touch "$HOME/.hushlogin"
@@ -307,19 +333,6 @@ if [ "$(uname)" = "Darwin" ]; then
     safe_link "$DOTFILES_DIR/claude-guard/launchagents/com.turntrout.ccr.plist" "$CCR_PLIST_DEST"
     launchctl bootout "gui/$(id -u)" "$CCR_PLIST_DEST" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$CCR_PLIST_DEST" 2>/dev/null || true
-
-    # The Tailscale exit-node login agent is retired: egress is the Mullvad
-    # app, and clearing a Tailscale exit node deletes the physical default
-    # route (CLAUDE.md "VPN"). Evict the rendered agent from machines that
-    # still carry it — same evict-on-every-run shape as the homebrew
-    # tailscaled plist above, and a no-op once it is gone.
-    TS_EXIT_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
-    if [ -f "$TS_EXIT_PLIST_DEST" ]; then
-        status_msg "Removing retired tailscale-exit-node launch agent"
-        launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
-        rm -f "$TS_EXIT_PLIST_DEST"
-        rm -rf "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
-    fi
 
     # Duplicati: the daily offsite backup. Its LaunchAgent is tracked here
     # rather than living only in ~/Library/LaunchAgents so a rebuilt machine

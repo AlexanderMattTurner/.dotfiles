@@ -454,7 +454,9 @@ security updates on a VPN daemon.
 
 `setup.bash` also evicts the retired `com.turntrout.tailscale-exit-node`
 login agent (the applier that used to engage a Mullvad exit node at
-boot) from any machine still carrying it, on every run.
+boot) and the retired SwiftBar `vpn.10s.bash` link from any machine
+still carrying them, on every run including `--link-only`; `doctor.bash`
+FAILs if the agent plist is back.
 
 A milder hazard: `brew upgrade tailscale` swaps the CLI binary but
 leaves the *old* `tailscaled` running (version skew).
