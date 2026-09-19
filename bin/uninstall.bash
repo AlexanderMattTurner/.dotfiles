@@ -77,27 +77,6 @@ if $IS_MAC; then
         esac
     fi
 
-    # Rendered real file (see setup.bash) — remove with rm.
-    TS_EXIT_PLIST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
-    if [[ -f "$TS_EXIT_PLIST" ]]; then
-        if $ASSUME_YES; then
-            choice=y
-        else
-            read -rp "Unload + remove tailscale-exit-node launch agent? (y/N) " choice
-        fi
-        case "$choice" in
-        y | Y)
-            launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST" 2>/dev/null || true
-            if rm -f "$TS_EXIT_PLIST"; then
-                echo "  removed tailscale-exit-node launch agent"
-            else
-                echo "  FAILED to remove $TS_EXIT_PLIST"
-            fi
-            ;;
-        *) echo "  skip tailscale-exit-node launch agent" ;;
-        esac
-    fi
-
     # Removing this stops the daily offsite backup, so the prompt says so
     # outright — it is the one agent here whose absence loses data rather
     # than just convenience. --yes still removes it, matching every other

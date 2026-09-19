@@ -23,7 +23,7 @@ concurrency:
 # assertions and ruff already lints it.
 #
 # Runs on Ubuntu and macOS so the `if $IS_MAC` arm of bin/lib/symlinks.sh
-# (aerospace, iTerm2 plist, swiftbar) is exercised on the OS that
+# (aerospace, iTerm2 plist) is exercised on the OS that
 # emits those entries. The bespoke macOS launch-agent safe_links in setup.bash
 # live past --link-only's exit point and are intentionally out of scope.
 
