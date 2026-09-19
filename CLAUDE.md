@@ -186,27 +186,23 @@ now?" prompt. Prune only ever removes already-dangling symlinks, so unlike
 runs — `setup.bash` invokes doctor with `--no-refresh` so the success path
 never blocks on input.
 
-### Session-setup upkeep (Claude Code on the web)
+### Claude Code hooks
 
-`claude-guard/hooks/session-setup.bash` (symlinked via
-`.claude/hooks/`) bootstraps fresh web/cloud sessions.
-When a hook in `.pre-commit-config.yaml` or `bin/pre-push` gains a new
-tool dependency, install it from `session-setup.bash` — otherwise the
-next fresh session fails its first push on a missing-tool error
-unrelated to the actual change.
+This repo runs **no** Claude Code hooks. `.claude/settings.json` carries
+`env` and permission denies only, and it is in `template-sync.yaml`'s
+`EXCLUDE_PATHS` so the template cannot reintroduce a `hooks` block.
 
-Put new installers inside the `=== PROJECT CUSTOMIZATIONS ===` block so
-`template-sync.yaml`'s 3-way merge preserves them. Helpers, in order
-of preference: `webi_install_if_missing` (shfmt, gh, jq),
-`uv_install_if_missing` (most uv tools; pre-commit needs an inline
-`uv tool install pre-commit --with pre-commit-uv` for the plugin),
-`apt-get` guarded by `is_root` (shellcheck, fish), direct release
-tarball (gitleaks — webi doesn't ship it). The block currently
-installs `pre-commit`, `fish` (the
-`fish --no-execute` hook needs it even on machines that don't use fish
-interactively), and `gitleaks` (required, not optional — `bin/pre-push`
-sets `GITLEAKS_REQUIRED=1`, which flips `bin/lint.bash` from
-skip-on-missing to fail-on-missing).
+The reason is structural, not a preference. `.claude/hooks` is a symlink
+into the `.gitignore`d `claude-guard/` checkout, and `template-sync.sh`'s
+`process_file()` skips every synced path that is or sits under a symlink.
+A synced `.claude/settings.json` therefore always names hook scripts this
+tree cannot have, and Claude Code prints `No such file or directory` on
+every tool call that matches one. The hook suite belongs to claude-guard
+and runs for sessions rooted there.
+
+A fresh web/cloud session in this repo installs no tooling of its own, so
+a new dependency in `.pre-commit-config.yaml` or `bin/pre-push` must be
+installable from the session by hand.
 
 ### Secrets
 

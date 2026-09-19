@@ -105,7 +105,15 @@ env:
   # validate-config.bash. Synced in wholesale by 9a2abed without anyone
   # excluding them, they failed on every PR from the first commit that
   # touched a synced path. See AlexanderMattTurner/.dotfiles#153.
-  EXCLUDE_PATHS: ".github/workflows/security-vulnerability-scan.yaml .github/prompts/security-vulnerability-scan.md .github/workflows/pre-commit.yaml .github/workflows/validate-config.yaml .github/scripts/check-proto-pollution.mjs .github/scripts/validate-config.sh .github/workflows/lint.yaml .github/workflows/node-tests.yaml .github/workflows/gitleaks.yaml .github/scripts/script-configured.sh .github/scripts/script-configured-output.sh .github/scripts/gitleaks-scan.sh .github/workflows/auto-version.yaml .github/workflows/release-canary.yaml .github/workflows/build-publish-notify.yaml .github/scripts/version-bump.sh .github/scripts/version-bump.test.mjs .github/scripts/promote-changelog.mjs .github/scripts/release-canary.sh .github/scripts/npm-max-stable.mjs .github/scripts/npm-max-stable.test.mjs"
+  #
+  # .claude/settings.json registers hooks under .claude/hooks/, but .claude/hooks
+  # is a symlink into the gitignored claude-guard/ checkout and process_file()
+  # skips every synced path that is or sits under a symlink. The settings file
+  # therefore always names hooks this tree cannot have, and Claude Code reports
+  # "No such file or directory" on every tool call that matches one. This repo
+  # runs no Claude Code hooks of its own — claude-guard owns that config, for
+  # sessions rooted in claude-guard.
+  EXCLUDE_PATHS: ".claude/settings.json .github/workflows/security-vulnerability-scan.yaml .github/prompts/security-vulnerability-scan.md .github/workflows/pre-commit.yaml .github/workflows/validate-config.yaml .github/scripts/check-proto-pollution.mjs .github/scripts/validate-config.sh .github/workflows/lint.yaml .github/workflows/node-tests.yaml .github/workflows/gitleaks.yaml .github/scripts/script-configured.sh .github/scripts/script-configured-output.sh .github/scripts/gitleaks-scan.sh .github/workflows/auto-version.yaml .github/workflows/release-canary.yaml .github/workflows/build-publish-notify.yaml .github/scripts/version-bump.sh .github/scripts/version-bump.test.mjs .github/scripts/promote-changelog.mjs .github/scripts/release-canary.sh .github/scripts/npm-max-stable.mjs .github/scripts/npm-max-stable.test.mjs"
 
 concurrency:
   group: template-sync

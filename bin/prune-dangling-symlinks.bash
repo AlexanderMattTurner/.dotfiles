@@ -18,8 +18,8 @@
 # Distinct from bin/lib/stale-symlinks.sh, which is deliberately narrower: that
 # one scans the *managed parent dirs* under $HOME and only ever touches links
 # whose target is an absolute path inside $DOTFILES_DIR (the rename-leftover
-# signature). `.claude/hooks` points at the relative `../claude-guard/hooks`, so
-# it fails that check by design. Widening it to cover this case would cost it
+# signature). `.claude/hooks` points at the relative
+# `../claude-guard/.claude/hooks`, so it fails that check by design. Widening it to cover this case would cost it
 # the property that makes it safe to run from setup.bash unattended.
 #
 # Safe by construction: only symlinks whose target is already missing are
