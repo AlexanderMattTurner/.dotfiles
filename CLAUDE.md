@@ -428,17 +428,27 @@ re-apply derives resolvers from the netmap alone and drops the Mullvad
 entry. It restores `--accept-dns` to its prior value and no-ops when
 `CorpDNS` was already false (DNS never hijacked ⇒ not this bug).
 
-**Historical note — do not re-chase this.** This was long attributed to
-a *route* drop: `tailscaled` failing to re-elect the physical default
-route, leaving `State:/Network/Global/IPv4` with no
-`Router`/`PrimaryInterface`. `restore_default_route` + the Wi-Fi bounce
-were built for that theory and are retained (cheap, and the state was
-apparently seen once), but they are **not** what fires: across 17
-`→ off` disconnects in `menu.log` the recovery path logged *zero*
-times, because `sc_default_router` reads the router — which never drops.
-A teardown that checks only routing will always call this blackhole
-clean. Both halves are now verified, and both run even if the first
-fails.
+**The route drop is real too, and it hides from SystemConfiguration.**
+On 2026-09-19 a disconnect logged a clean `off → off` while raw `ping
+1.1.1.1` was dead: the kernel table (`netstat -rn -f inet`) held only
+`default utun0` and *no* `en0` default at all, yet
+`State:/Network/Global/IPv4` still reported `Router : 192.168.8.1`. The
+old `sc_default_router` probe read that key, so across 17 earlier
+`→ off` disconnects the recovery path logged zero times — not because
+the route never dropped, but because the probe could not see it drop.
+`restore_default_route` now judges `tailscale_physical_default_route`
+(in `bin/lib/tailscale-resolve.sh`): a `default` row whose interface is
+not a `utun` and whose flags are not reject/blackhole. The scoped
+(`I`-flagged) `en0` default that macOS keeps under an engaged exit node
+counts as present — it is the row promoted on teardown — so the same
+probe is valid with the exit node on or off, which is why
+`doctor.bash` runs it unconditionally. SC state is still read, but only
+to capture the interface to bounce. Recovery is a Wi-Fi power cycle
+(`networksetup -setairportpower`, the only sudo-free lever); with sudo,
+`route -n add default <router>` also works. Both halves run even if
+the first fails. Locked by `test_route_drop_is_healed_by_bouncing_wifi_
+despite_sc_router` — its scutil stub reports a Router throughout, so
+any probe that trusts SC goes red.
 
 A second trigger reaches the same stale-resolver state with **no
 disconnect to hook**: sleep/wake churn, where an exit node stops routing

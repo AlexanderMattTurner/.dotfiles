@@ -167,6 +167,38 @@ tailscale_dns_reapply() {
     "$ts" set --accept-dns=true >/dev/null 2>&1 || return 1
 }
 
+# Print the interface carrying the kernel's physical IPv4 default route: a
+# `default` row in `netstat -rn` whose interface is not a utun (the exit-node
+# tunnel) and whose flags are not reject/blackhole (OrbStack's `!` bridges make
+# `route get default` succeed while the machine is offline). Empty + non-zero
+# when there is none — the exit-node-teardown blackhole.
+#
+# The routing *table*, not SystemConfiguration. On 2026-09-19
+# `State:/Network/Global/IPv4` still reported `Router : 192.168.8.1` while the
+# table held only `default utun0` and no en0 default at all, so every SC-based
+# probe called the blackhole clean and the disconnect logged `off → off` with
+# no bounce. The scoped (`I`-flagged) en0 default that macOS keeps while the
+# tunnel owns `default` counts as present: it is the row that gets promoted on
+# teardown, and its absence is the failure in both the on and off states.
+#
+# Column 4 is Netif on macOS (Destination Gateway Flags Netif Expire); `$NF`
+# is wrong because rows can carry a trailing `!` marker.
+tailscale_physical_default_route() {
+    local ifc
+    ifc="$(netstat -rn -f inet 2>/dev/null |
+        awk '$1 == "default" && $3 !~ /[RB]/ && $4 !~ /^utun/ && !seen {ifc = $4; seen = 1}
+             END {if (seen) print ifc}')"
+    [ -n "$ifc" ] || return 1
+    printf '%s\n' "$ifc"
+}
+
+# Non-zero when the routing table can't be read (no netstat). Same contract as
+# tailscale_dns_probe_available: doctor must `skip`, not `pass`, a check it
+# never ran.
+tailscale_route_probe_available() {
+    command -v netstat >/dev/null 2>&1
+}
+
 # Print absolute path to a working tailscale CLI; non-zero if none found.
 find_tailscale() {
     local c
