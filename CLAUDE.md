@@ -20,13 +20,16 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   settings, wrapper scripts, Venice/ccr routing, and the ccr
   LaunchAgent plist. `.claude/` in this repo is symlinks into this
   directory.
-  - `hooks/monitor.bash` — AI safety "trusted monitor" PreToolUse hook.
-    Sends each tool call to a cheap/OSS model for review before
-    execution (the "AI control" pattern). Auto-detects provider from
-    available API keys: Anthropic (Haiku) or Venice (qwen3-coder-480b /
-    OSS). Skips Read by default. Logs decisions to
-    `~/.cache/claude-monitor/monitor.jsonl`. Disable with
-    `MONITOR_DISABLED=1`.
+  - `.claude/hooks/monitor.py` + `.claude/hooks/monitorlib/` — AI
+    safety "trusted monitor" PreToolUse hook. Sends each tool call to a
+    cheap/OSS model for review before execution (the "AI control"
+    pattern). Launched via `monitor-launch.bash` and
+    `monitor-dispatch.bash`. Providers and their key env vars come from
+    `.claude/hooks/monitor-providers.json`, the SSOT — Anthropic and
+    Venice today. Logs decisions to
+    `~/.cache/claude-monitor/monitor.jsonl` (`MONITOR_LOG`), and reads
+    its policy prompt from `/etc/claude-monitor/policy.txt`
+    (`MONITOR_POLICY`).
   - `hooks/notify.bash` — cross-platform desktop notification for the
     Notification lifecycle hook.
   - `hooks/statusline.bash` — shows model, branch, context usage, and
@@ -186,27 +189,23 @@ now?" prompt. Prune only ever removes already-dangling symlinks, so unlike
 runs — `setup.bash` invokes doctor with `--no-refresh` so the success path
 never blocks on input.
 
-### Session-setup upkeep (Claude Code on the web)
+### Claude Code hooks
 
-`claude-guard/hooks/session-setup.bash` (symlinked via
-`.claude/hooks/`) bootstraps fresh web/cloud sessions.
-When a hook in `.pre-commit-config.yaml` or `bin/pre-push` gains a new
-tool dependency, install it from `session-setup.bash` — otherwise the
-next fresh session fails its first push on a missing-tool error
-unrelated to the actual change.
+This repo runs **no** Claude Code hooks. `.claude/settings.json` carries
+`env` and permission denies only, and it is in `template-sync.yaml`'s
+`EXCLUDE_PATHS` so the template cannot reintroduce a `hooks` block.
 
-Put new installers inside the `=== PROJECT CUSTOMIZATIONS ===` block so
-`template-sync.yaml`'s 3-way merge preserves them. Helpers, in order
-of preference: `webi_install_if_missing` (shfmt, gh, jq),
-`uv_install_if_missing` (most uv tools; pre-commit needs an inline
-`uv tool install pre-commit --with pre-commit-uv` for the plugin),
-`apt-get` guarded by `is_root` (shellcheck, fish), direct release
-tarball (gitleaks — webi doesn't ship it). The block currently
-installs `pre-commit`, `fish` (the
-`fish --no-execute` hook needs it even on machines that don't use fish
-interactively), and `gitleaks` (required, not optional — `bin/pre-push`
-sets `GITLEAKS_REQUIRED=1`, which flips `bin/lint.bash` from
-skip-on-missing to fail-on-missing).
+The reason is structural, not a preference. `.claude/hooks` is a symlink
+into the `.gitignore`d `claude-guard/` checkout, and `template-sync.sh`'s
+`process_file()` skips every synced path that is or sits under a symlink.
+A synced `.claude/settings.json` therefore always names hook scripts this
+tree cannot have, and Claude Code prints `No such file or directory` on
+every tool call that matches one. The hook suite belongs to claude-guard
+and runs for sessions rooted there.
+
+A fresh web/cloud session in this repo installs no tooling of its own, so
+a new dependency in `.pre-commit-config.yaml` or `bin/pre-push` must be
+installable from the session by hand.
 
 ### Secrets
 
@@ -268,30 +267,33 @@ skip-on-missing to fail-on-missing).
 
 ### Trusted infrastructure protection
 
-The AI safety monitor (`monitor.bash`), its policy prompt, audit
-log, and ntfy config must be unreadable and unmodifiable by the
-monitored model. If the model can read the monitor, it can find
+The AI safety monitor (`.claude/hooks/monitor.py` and its
+`monitorlib/` package), its policy prompt, audit log, and ntfy config
+must be unreadable and unmodifiable by the monitored model. If the model can read the monitor, it can find
 parsing vulnerabilities or learn which patterns are flagged and
 tailor actions to evade detection.
 
 **Defense layers (devcontainer):**
 
 1. **Root ownership (kernel-enforced).**
-   `harden-monitor.bash` sets `monitor.bash` to `root:root 700`
+   `.devcontainer/harden-monitor.bash` sets `monitor.py` to
+   `root:root 700` and `monitorlib/` to `root:root` `go-rwx`
    (unreadable by the `node` user Claude runs as), the policy prompt
    at `/etc/claude-monitor/policy.txt` to `root:root 600`, and the
-   log directory to `root:root 1733` (append-only for non-root).
+   log directory to `root:root 1733` (append-only for non-root). It
+   also records a checksum at `/etc/claude-monitor/monitor.sha256`
+   (mode 444).
 
-2. **Dispatch wrapper.**  Bash scripts must be readable to execute,
-   so `settings.json` points to `monitor-dispatch.bash` — a tiny
-   readable wrapper that `sudo`s into the real script. The model can
-   read the 8-line dispatch but learns nothing about detection logic.
+2. **Dispatch wrapper.**  Shell scripts must be readable to execute,
+   so `settings.json` points to `monitor-dispatch.bash`, a readable
+   wrapper that routes to the devcontainer sidecar or delegates to the
+   root-owned `monitor.py`. The model can read the dispatch but learns
+   nothing about detection logic — that lives in `monitorlib/`.
 
 3. **Deny rules (defense in depth).** `settings.json` denies
-   `Read(.claude/hooks/monitor.bash)` and
-   `Read(/etc/claude-monitor/**)`. These are glob patterns and
-   trivially bypassable — they exist only to catch accidental reads,
-   not as a security boundary.
+   `Read(/run/monitor-secret/**)`. Glob patterns are trivially
+   bypassable, so they catch accidental reads only and are not a
+   security boundary; the root ownership in layer 1 is.
 
 4. **`IS_SANDBOX=no`** in `devcontainer.json` keeps the monitor
    active inside the container (the Anthropic cloud sets
@@ -687,17 +689,20 @@ branch is `master`** — so their `push` path silently never fires here
 (`zizmor.yaml`, `hook-lifecycle.yaml`, `format-check.yaml`,
 `auto-resolve-conflicts.yaml`, `pr-meta-privileged.yaml`,
 `sync-required-checks.yaml`). Their `pull_request` triggers still work,
-which is why this went unnoticed. Left unfixed here deliberately: three
-of these back `# required-check: true` reporters
-(`format-check-passed`, `hook-lifecycle-passed`, `zizmor-passed`) that
-`sync-required-checks.yaml` uses as the *complete* source of truth for
-branch-protection's required checks, and that annotation coverage is
-thin (only those 3 in the whole tree) — flipping triggers live without
-first confirming what the ruleset actually requires today risks
-silently dropping a currently-required check. Before fixing: run
-`sync-required-checks.yaml` via `workflow_dispatch` with
-`check-only: true` to see the actual drift, annotate any reporter that
-should be required but isn't, then add `master` to each trigger.
+which is why this went unnoticed. Three of these back
+`# required-check: true` reporters (`format-check-passed`,
+`hook-lifecycle-passed`, `zizmor-passed`) that `sync-required-checks.yaml`
+uses as the *complete* source of truth for branch-protection's required
+checks, and that annotation coverage is thin (only those 3 in the whole
+tree). The old worry — that flipping a trigger could silently drop a
+currently-required check — does not apply: both rulesets on the default
+branch (`Default branch`, `Protect branches`) declare an EMPTY
+`required_status_checks` list, so nothing is required today and no check
+gates a merge. Read that back with
+`gh api repos/{owner}/{repo}/rulesets/{id}` before trusting this
+sentence. Fixing means annotating any reporter that should be required,
+running `sync-required-checks.yaml` to install it, then adding `master`
+to each trigger.
 
 ## When fixing CI failures
 
