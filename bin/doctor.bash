@@ -540,9 +540,17 @@ if $IS_MAC; then
             # anyone clicks "Disconnect". Clearing it needs a Wi-Fi bounce to
             # get the DHCP default route back, hence the two-step remedy.
             if tailscale_exit_node_engaged "$ts"; then
+                # Clearing deletes the DHCP default route; re-running DHCP is
+                # what brings it back. A Wi-Fi power-cycle does that without
+                # sudo; on a wired Mac fall back to ipconfig.
                 wifi_if="$(networksetup -listallhardwareports 2>/dev/null |
                     awk '/^Hardware Port: Wi-Fi/ {getline; print $2}')"
-                fail "Tailscale exit node engaged" "egress belongs to the Mullvad app — run: $ts set --exit-node= && networksetup -setairportpower ${wifi_if:-<wifi-interface>} off && networksetup -setairportpower ${wifi_if:-<wifi-interface>} on"
+                if [[ -n "$wifi_if" ]]; then
+                    route_fix="networksetup -setairportpower $wifi_if off && networksetup -setairportpower $wifi_if on"
+                else
+                    route_fix="sudo ipconfig set <primary-interface> DHCP"
+                fi
+                fail "Tailscale exit node engaged" "egress belongs to the Mullvad app — run: $ts set --exit-node= && $route_fix"
             else
                 pass "Tailscale exit node off"
             fi
@@ -581,7 +589,12 @@ if $IS_MAC; then
         case "$(mullvad_autoconnect "$mullvad_cli")" in
         on) pass "Mullvad auto-connect on" ;;
         off) fail "Mullvad auto-connect" "off — machine boots in the clear (run: \"$mullvad_cli\" auto-connect set on)" ;;
-        *) fail "Mullvad daemon" "CLI cannot reach the daemon — open Mullvad VPN.app, or run: sudo launchctl kickstart -k system/net.mullvad.daemon" ;;
+        *) fail "Mullvad daemon" "CLI cannot reach the daemon — open Mullvad VPN.app and check its status" ;;
+        esac
+        case "$(mullvad_tunnel "$mullvad_cli")" in
+        connected) pass "Mullvad tunnel connected" ;;
+        disconnected) fail "Mullvad tunnel" "not connected — traffic is in the clear (run: \"$mullvad_cli\" connect)" ;;
+        *) ;; # already reported by the auto-connect arm
         esac
     else
         skip "Mullvad VPN" "Mullvad VPN.app not installed (brew install --cask mullvad-vpn)"

@@ -134,7 +134,7 @@ def test_version_skew_unreadable_daemon_is_silent(tmp_path: Path) -> None:
     assert proc.stdout.strip() == ""
 
 
-def _exit_node(tmp_path: Path, prefs_json: str | None) -> int:
+def _exit_node(tmp_path: Path, prefs_json: str | None) -> bool:
     """Run tailscale_exit_node_engaged against a stub serving `debug prefs`.
 
     `prefs_json=None` makes the stub fail outright (daemon down): the check
@@ -153,7 +153,7 @@ def _exit_node(tmp_path: Path, prefs_json: str | None) -> int:
             "exit 3\n"
         )
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
-    return subprocess.run(
+    proc = subprocess.run(
         [
             "bash",
             "-c",
@@ -165,7 +165,12 @@ def _exit_node(tmp_path: Path, prefs_json: str | None) -> int:
         text=True,
         stdin=subprocess.DEVNULL,
         timeout=5,
-    ).returncode
+    )
+    # A verdict is exit 0 or 1 with no noise; 127 (function missing) or a
+    # sourcing error must not pass for "off".
+    assert proc.returncode in (0, 1), proc.stderr
+    assert proc.stderr == ""
+    return proc.returncode == 0
 
 
 def _prefs(exit_id: str, exit_ip: str) -> str:
@@ -193,4 +198,37 @@ def _prefs(exit_id: str, exit_ip: str) -> str:
 def test_exit_node_engaged(
     tmp_path: Path, prefs_json: str | None, engaged: bool
 ) -> None:
-    assert (_exit_node(tmp_path, prefs_json) == 0) is engaged
+    assert _exit_node(tmp_path, prefs_json) is engaged
+
+
+@pytest.mark.parametrize(
+    "body,key,expected",
+    [
+        ('  "Version": "1.102.4-tbbcd7d1fc",', "Version", "1.102.4-tbbcd7d1fc"),
+        ('  "ExitNodeID": null,', "ExitNodeID", ""),
+        ('  "Other": "x"', "ExitNodeID", ""),
+        ('  "K": "first",\n  "K": "second"', "K", "first"),
+        ('  "Last": "no-comma"', "Last", "no-comma"),
+    ],
+)
+def test_json_value(tmp_path: Path, body: str, key: str, expected: str) -> None:
+    """The line-oriented JSON reader both skew and exit-node checks rely on."""
+    stub = tmp_path / "tailscale"
+    stub.write_text(f"#!/bin/sh\ncat <<'TS_EOF'\n{{\n{body}\n}}\nTS_EOF\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{RESOLVE_SH}" && _tailscale_json_value "$1" "$2" status --json',
+            "_",
+            key,
+            str(stub),
+        ],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=5,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == expected

@@ -52,8 +52,9 @@ def test_find_mullvad_fails_when_app_absent(tmp_path: Path) -> None:
     [
         ("Autoconnect: on", 0, "on"),
         ("Autoconnect: off", 0, "off"),
-        ("Error: Management RPC server or client error", 1, "no-daemon"),
-        ("", 0, "no-daemon"),
+        ("Error: Management RPC server or client error", 1, "unreachable"),
+        ("Autoconnect: on", 1, "unreachable"),
+        ("", 0, "unreachable"),
     ],
 )
 def test_autoconnect_classification(
@@ -61,5 +62,24 @@ def test_autoconnect_classification(
 ) -> None:
     stub = _stub(tmp_path, stdout, rc)
     proc = _run('mullvad_autoconnect "$MULLVAD_CLI"', stub)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == expected
+
+
+# Real `mullvad status` first lines.
+@pytest.mark.parametrize(
+    "stdout,rc,expected",
+    [
+        ("Connected\n    Relay:  us-chi-wg-301", 0, "connected"),
+        ("Disconnected\n    Visible location: Canada", 0, "disconnected"),
+        ("Connecting", 0, "disconnected"),
+        ("Error: Management RPC server or client error", 1, "unreachable"),
+    ],
+)
+def test_tunnel_classification(
+    tmp_path: Path, stdout: str, rc: int, expected: str
+) -> None:
+    stub = _stub(tmp_path, stdout, rc)
+    proc = _run('mullvad_tunnel "$MULLVAD_CLI"', stub)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == expected

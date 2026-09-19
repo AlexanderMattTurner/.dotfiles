@@ -103,8 +103,8 @@ if [ "$(uname)" = "Darwin" ]; then
         status_msg "Removing retired tailscale-exit-node launch agent"
         launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
         rm -f "$TS_EXIT_PLIST_DEST"
-        rm -rf "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
     fi
+    rm -rf "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
 fi
 
 [[ -f "$HOME/.extras.bash" ]] || touch "$HOME/.extras.bash"

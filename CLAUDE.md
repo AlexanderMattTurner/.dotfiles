@@ -382,8 +382,9 @@ up?" could only be answered by opening the web UI.
 ssh to `mac-mini` and friends — and is never used as an exit node.**
 `mullvad auto-connect` is on, so the machine is behind the VPN from
 login with no click; Tailscale's own traffic simply rides through the
-Mullvad tunnel. `doctor.bash` FAILs if auto-connect is off or if a
-Tailscale exit node is engaged. The `mullvad` fish function is a thin
+Mullvad tunnel. `doctor.bash` FAILs if auto-connect is off, if the
+tunnel is not connected right now, or if a Tailscale exit node is
+engaged. The `mullvad` fish function is a thin
 wrapper over the app-bundled CLI (`bin/lib/mullvad.sh` is the bash-side
 resolver of the same path).
 
@@ -409,9 +410,10 @@ After it, `route get 1.1.1.1` says "not in table", every dial fails with
 Re-engaging the exit node makes it worse (the add now succeeds, so
 `default` lands on `utun0` with no underlying path to the exit node).
 Nothing re-adds the route until DHCP re-runs — hence only a Wi-Fi
-bounce or a reboot ever fixed it. Reported upstream (tailscale/tailscale;
-link the issue here once filed); until it is fixed the Homebrew build
-cannot safely clear an exit node on this OS.
+bounce or a reboot ever fixed it. Not yet filed upstream as of
+2026-09-19 (link the tailscale/tailscale issue here when it is); until
+it is fixed the Homebrew build cannot safely clear an exit node on this
+OS.
 
 The DNS story (tailscaled pointing macOS at Mullvad's resolver
 `194.242.2.2` through `100.100.100.100`) is real but downstream of the

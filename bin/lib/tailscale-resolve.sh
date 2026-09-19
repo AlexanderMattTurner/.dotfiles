@@ -42,7 +42,7 @@ tailscale_health() {
 tailscale_version_skew() {
     local client daemon
     client="$("$1" version 2>/dev/null | head -n1)"
-    daemon="$(_tailscale_json_value "$1" status --json -- Version)"
+    daemon="$(_tailscale_json_value Version "$1" status --json)"
     daemon="${daemon%%-*}"
     if [ -z "$client" ] || [ -z "$daemon" ] || [ "$client" = "$daemon" ]; then
         return 0
@@ -51,24 +51,18 @@ tailscale_version_skew() {
     return 1
 }
 
-# Print the string value of top-level key $N from the pretty-printed JSON that
-# `$1 <args...> -- KEY` emits, e.g. `_tailscale_json_value tailscale status
-# --json -- Version`. Empty when the key is absent, null, or the command fails.
-# awk reads to EOF rather than `exit`ing on the match, so the writer never
-# sees a closed pipe under the caller's `set -o pipefail`.
+# Print the string value of top-level key $1 from the pretty-printed JSON that
+# `$2 $3...` emits, e.g. `_tailscale_json_value Version tailscale status
+# --json`. Empty when the key is absent, null, or the command fails. awk reads
+# to EOF rather than `exit`ing on the match, so the writer never sees a closed
+# pipe under the caller's `set -o pipefail`.
 _tailscale_json_value() {
-    local cli="$1" key
+    local key="$1"
     shift
-    local args=()
-    while [ "$1" != -- ]; do
-        args+=("$1")
-        shift
-    done
-    key="$2"
-    "$cli" "${args[@]}" 2>/dev/null |
+    "$@" 2>/dev/null |
         awk -v key="\"$key\"" '
             $1 == key ":" && !seen {seen = 1; v = $2; sub(/,$/, "", v); gsub(/"/, "", v)}
-            END {print v}'
+            END {if (v != "null") print v}'
 }
 
 # True when $1 (CLI path) has an exit node in its *persisted prefs*. On this
@@ -83,8 +77,8 @@ _tailscale_json_value() {
 # check already covers that.
 tailscale_exit_node_engaged() {
     local id ip
-    id="$(_tailscale_json_value "$1" debug prefs -- ExitNodeID)"
-    ip="$(_tailscale_json_value "$1" debug prefs -- ExitNodeIP)"
+    id="$(_tailscale_json_value ExitNodeID "$1" debug prefs)"
+    ip="$(_tailscale_json_value ExitNodeIP "$1" debug prefs)"
     [ -n "$id$ip" ]
 }
 

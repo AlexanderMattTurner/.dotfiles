@@ -15,8 +15,9 @@ find_mullvad() {
 # Classify the auto-connect setting for $1 (CLI path). Prints one of:
 #   on         the daemon connects by itself at login
 #   off        it does not — the machine boots in the clear
-#   no-daemon  the CLI could not reach the daemon, so the setting is unknown
-#              and `auto-connect set on` would fail the same way
+#   unreachable  the CLI could not talk to the daemon (down, socket denied,
+#                version mismatch), so the setting is unknown and
+#                `auto-connect set on` would fail the same way
 #
 # Consumers that must stay in sync: bin/doctor.bash, tests/test_mullvad.py.
 # Output is captured, never piped into grep -q: a reader closing early would
@@ -24,12 +25,28 @@ find_mullvad() {
 mullvad_autoconnect() {
     local out
     out="$("$1" auto-connect get 2>/dev/null)" || {
-        echo no-daemon
+        echo unreachable
         return
     }
     case "$out" in
     *"Autoconnect: on"*) echo on ;;
     *"Autoconnect: off"*) echo off ;;
-    *) echo no-daemon ;;
+    *) echo unreachable ;;
+    esac
+}
+
+# Classify the tunnel for $1 (CLI path): connected / disconnected /
+# unreachable. Auto-connect only says what happens at login; this is whether
+# the machine is behind the VPN *now*. Same consumers as above.
+mullvad_tunnel() {
+    local out
+    out="$("$1" status 2>/dev/null)" || {
+        echo unreachable
+        return
+    }
+    case "$out" in
+    Connected*) echo connected ;;
+    Disconnected* | Disconnecting* | Connecting*) echo disconnected ;;
+    *) echo unreachable ;;
     esac
 }
