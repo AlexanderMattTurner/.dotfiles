@@ -683,17 +683,20 @@ branch is `master`** — so their `push` path silently never fires here
 (`zizmor.yaml`, `hook-lifecycle.yaml`, `format-check.yaml`,
 `auto-resolve-conflicts.yaml`, `pr-meta-privileged.yaml`,
 `sync-required-checks.yaml`). Their `pull_request` triggers still work,
-which is why this went unnoticed. Left unfixed here deliberately: three
-of these back `# required-check: true` reporters
-(`format-check-passed`, `hook-lifecycle-passed`, `zizmor-passed`) that
-`sync-required-checks.yaml` uses as the *complete* source of truth for
-branch-protection's required checks, and that annotation coverage is
-thin (only those 3 in the whole tree) — flipping triggers live without
-first confirming what the ruleset actually requires today risks
-silently dropping a currently-required check. Before fixing: run
-`sync-required-checks.yaml` via `workflow_dispatch` with
-`check-only: true` to see the actual drift, annotate any reporter that
-should be required but isn't, then add `master` to each trigger.
+which is why this went unnoticed. Three of these back
+`# required-check: true` reporters (`format-check-passed`,
+`hook-lifecycle-passed`, `zizmor-passed`) that `sync-required-checks.yaml`
+uses as the *complete* source of truth for branch-protection's required
+checks, and that annotation coverage is thin (only those 3 in the whole
+tree). The old worry — that flipping a trigger could silently drop a
+currently-required check — does not apply: both rulesets on the default
+branch (`Default branch`, `Protect branches`) declare an EMPTY
+`required_status_checks` list, so nothing is required today and no check
+gates a merge. Read that back with
+`gh api repos/{owner}/{repo}/rulesets/{id}` before trusting this
+sentence. Fixing means annotating any reporter that should be required,
+running `sync-required-checks.yaml` to install it, then adding `master`
+to each trigger.
 
 ## When fixing CI failures
 
