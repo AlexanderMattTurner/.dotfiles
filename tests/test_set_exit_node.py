@@ -113,6 +113,9 @@ def test_off_clears_exit_node_without_lan_flag(tmp_path: Path) -> None:
 #              silently no-ops, so nothing below is really exercised) or does
 #              live lookups against the runner's resolver — nondeterministic
 #              either way.
+#   netstat    the routing table restore_default_route judges. Unstubbed it
+#              reads the runner's real table, whose `default` row is never a
+#              Mac's — the route path would go unexercised or false-alarm.
 #
 # If the script later shells out to a platform command absent from this list,
 # the branch stops executing and these tests keep passing on the fallback path.
@@ -137,8 +140,41 @@ DNS_ALIVE = "alive"
 DNS_DEAD = "dead"
 DNS_HEALS_ON_REAPPLY = "heals"
 
+# Route states. "heals" is the 2026-09-19 shape: no physical default in the
+# kernel table (SystemConfiguration still reporting a Router the whole time)
+# until Wi-Fi is bounced and macOS re-elects one.
+ROUTE_ALIVE = "alive"
+ROUTE_DEAD = "dead"
+ROUTE_HEALS_ON_BOUNCE = "heals"
+# Present, then absent for one sample while macOS promotes it, then present.
+ROUTE_BLINKS = "blinks"
 
-def _run_macos_disconnect(tmp_path: Path, dns: str = DNS_ALIVE):
+ROUTE_ROW = "default            192.168.1.1        UGScg                 en0"
+# `!`-marked rows are what a `$NF`-based reader would misparse as an interface.
+ROUTE_FILLER = """100.64/10          utun0              USc                 utun0
+169.254            link#14            UCS                   en0      !
+192.168.1.1/32     link#14            UCS                   en0      !"""
+
+# Answers -listallhardwareports so is_wifi_device accepts en0, and records the
+# power cycle. Only present in the runs that are *meant* to bounce.
+NETWORKSETUP_STUB = """#!/bin/sh
+case "$1" in
+-listallhardwareports)
+    echo "Hardware Port: Wi-Fi"
+    echo "Device: en0"
+    exit 0 ;;
+-setairportpower)
+    echo "$2 $3" >>"{bounces}"
+    [ "$3" = on ] && : >"{healed}"
+    exit 0 ;;
+esac
+exit 1
+"""
+
+
+def _run_macos_disconnect(
+    tmp_path: Path, dns: str = DNS_ALIVE, route: str = ROUTE_ALIVE
+):
     """Drive `off` down the macOS branch with the platform stubs above.
 
     Returns (proc, menu.log text, the `set` flags the script actually issued).
@@ -147,6 +183,8 @@ def _run_macos_disconnect(tmp_path: Path, dns: str = DNS_ALIVE):
     bin_dir.mkdir(exist_ok=True)
     args_file = tmp_path / "set-args"
     healed = tmp_path / "dns-healed"
+    route_healed = tmp_path / "route-healed"
+    bounces = tmp_path / "bounces"
 
     if dns == DNS_ALIVE:
         dig_body = "#!/bin/sh\necho 1.2.3.4\n"
@@ -157,11 +195,32 @@ def _run_macos_disconnect(tmp_path: Path, dns: str = DNS_ALIVE):
     else:
         dig_body = f'#!/bin/sh\n[ -f "{healed}" ] && echo 1.2.3.4\nexit 0\n'
 
+    if route == ROUTE_ALIVE:
+        netstat_body = (
+            f'#!/bin/sh\necho "{ROUTE_ROW}"\ncat <<"EOF"\n{ROUTE_FILLER}\nEOF\n'
+        )
+    elif route == ROUTE_DEAD:
+        netstat_body = f'#!/bin/sh\ncat <<"EOF"\n{ROUTE_FILLER}\nEOF\n'
+    elif route == ROUTE_BLINKS:
+        counter = tmp_path / "netstat-calls"
+        netstat_body = (
+            f'#!/bin/sh\nn=$(cat "{counter}" 2>/dev/null || echo 0); n=$((n + 1))\n'
+            f'echo "$n" >"{counter}"\n'
+            f'[ "$n" -ne 3 ] && echo "{ROUTE_ROW}"\n'
+            f'cat <<"EOF"\n{ROUTE_FILLER}\nEOF\n'
+        )
+    else:
+        netstat_body = (
+            f'#!/bin/sh\n[ -f "{route_healed}" ] && echo "{ROUTE_ROW}"\n'
+            f'cat <<"EOF"\n{ROUTE_FILLER}\nEOF\n'
+        )
+
     stubs = {
         "uname": "#!/bin/sh\necho Darwin\n",
         "scutil": SCUTIL_STUB,
         "sleep": "#!/bin/sh\nexit 0\n",
         "dig": dig_body,
+        "netstat": netstat_body,
         "tailscale": (
             "#!/bin/sh\n"
             'case "$1 $2" in\n'
@@ -178,6 +237,10 @@ def _run_macos_disconnect(tmp_path: Path, dns: str = DNS_ALIVE):
             "esac\n"
         ),
     }
+    if route not in (ROUTE_ALIVE, ROUTE_BLINKS):
+        stubs["networksetup"] = NETWORKSETUP_STUB.format(
+            bounces=bounces, healed=route_healed
+        )
     for name, body in stubs.items():
         path = bin_dir / name
         path.write_text(body)
@@ -201,6 +264,11 @@ def _run_macos_disconnect(tmp_path: Path, dns: str = DNS_ALIVE):
         (menu_log.read_text() if menu_log.exists() else ""),
         args_file.read_text().split() if args_file.exists() else [],
     )
+
+
+def _bounces(tmp_path: Path) -> list[str]:
+    path = tmp_path / "bounces"
+    return path.read_text().splitlines() if path.exists() else []
 
 
 def test_sc_readers_survive_a_still_writing_scutil(tmp_path: Path) -> None:
@@ -280,3 +348,54 @@ def test_dns_that_stays_dead_exits_6_and_says_so(tmp_path: Path) -> None:
     assert "--accept-dns=true" in set_args, "must have attempted the re-apply"
     assert "DNS still dead" in log
     assert "DNS still dead" in proc.stderr
+
+
+def test_route_drop_is_healed_by_bouncing_wifi_despite_sc_router(
+    tmp_path: Path,
+) -> None:
+    """2026-09-19: no physical default in the kernel table, internet dead.
+
+    The scutil stub reports `Router : 192.168.1.1` throughout — exactly what
+    the real machine said — so a probe that trusted SystemConfiguration would
+    log `off → off` and return 0 with the user offline. The routing table is
+    the signal, and the bounce is the fix.
+    """
+    proc, log, set_args = _run_macos_disconnect(
+        tmp_path, DNS_ALIVE, ROUTE_HEALS_ON_BOUNCE
+    )
+
+    assert proc.returncode == 0, f"rc={proc.returncode} stderr={proc.stderr}"
+    assert _bounces(tmp_path) == ["en0 off", "en0 on"]
+    assert "blackholed the default route; bouncing en0" in log
+    assert "restored after bouncing en0" in log
+    assert set_args == ["--exit-node="], "DNS was fine; must not be toggled"
+
+
+def test_route_that_stays_dead_exits_5_and_says_so(tmp_path: Path) -> None:
+    proc, log, _ = _run_macos_disconnect(tmp_path, DNS_ALIVE, ROUTE_DEAD)
+
+    assert proc.returncode == 5
+    assert _bounces(tmp_path) == ["en0 off", "en0 on"], "must have tried once"
+    assert "no default route" in log
+    assert "no default route" in proc.stderr
+
+
+def test_both_halves_run_even_when_the_route_fails(tmp_path: Path) -> None:
+    """Reporting half a broken teardown is what hid the DNS bug for months."""
+    proc, log, set_args = _run_macos_disconnect(
+        tmp_path, DNS_HEALS_ON_REAPPLY, ROUTE_DEAD
+    )
+
+    assert proc.returncode == 5
+    assert "--accept-dns=true" in set_args
+    assert "DNS restored" in log
+
+
+def test_route_blink_during_teardown_does_not_bounce(tmp_path: Path) -> None:
+    """A route that appears, blinks once while macOS promotes it, and returns
+    is a normal teardown. `networksetup` is absent, so a bounce would exit 5."""
+    proc, log, _ = _run_macos_disconnect(tmp_path, DNS_ALIVE, ROUTE_BLINKS)
+
+    assert proc.returncode == 0, f"rc={proc.returncode} stderr={proc.stderr}"
+    assert "blinked" in log
+    assert "bouncing" not in log

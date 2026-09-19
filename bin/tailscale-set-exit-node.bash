@@ -16,12 +16,13 @@ die() {
 
 IS_MAC=$([[ "$(uname)" == "Darwin" ]] && echo true || echo false)
 
-# Router / interface of the global IPv4 primary service — the exact signal
-# tailscaled's network monitor reads as `defaultRoute`. Empty ⇒ macOS has no
-# primary route, i.e. the exit-node-teardown blackhole (traffic dies, both
-# families report "network is unreachable"). Reading SC state, not the routing
-# table, dodges the stale utun / OrbStack `!` reject routes that make
-# `route get default` succeed while the machine is actually offline.
+# Interface of the global IPv4 primary service, read from SC state — the
+# exact signal tailscaled's network monitor reads as `defaultRoute`. Captured
+# *before* the disconnect (it is what gets bounced), never used to judge the
+# route itself: on 2026-09-19 `State:/Network/Global/IPv4` still reported a
+# Router while the kernel table had no physical default at all, so an SC-based
+# route probe called the blackhole clean. The routing-table probe that
+# replaced it is tailscale_physical_default_route in the lib.
 #
 # The awk side must consume scutil's output to the end rather than `exit`-ing on
 # the first match. Under `set -o pipefail` an early awk exit closes the pipe
@@ -32,10 +33,6 @@ IS_MAC=$([[ "$(uname)" == "Darwin" ]] && echo true || echo false)
 # node. It is timing-dependent — invisible whenever scutil finishes writing
 # before awk exits, which is why it has not bitten yet. Keeping the first match
 # and printing it in END is the same result without the early close.
-sc_default_router() {
-    printf 'show State:/Network/Global/IPv4\n' | scutil 2>/dev/null |
-        awk '/Router/ && !seen {value = $NF; seen = 1} END {if (seen) print value}'
-}
 sc_primary_interface() {
     printf 'show State:/Network/Global/IPv4\n' | scutil 2>/dev/null |
         awk '/PrimaryInterface/ && !seen {value = $NF; seen = 1} END {if (seen) print value}'
@@ -81,42 +78,52 @@ notify() {
     fi
 }
 
-# True when sc_default_router is non-empty on $1 consecutive 1s samples; a
-# single empty sample fails immediately.
+# True when a physical default route is present on $1 consecutive 1s samples;
+# a single empty sample fails immediately.
 #
 # One sample is not enough, and sampling at t=0 is actively wrong: `tailscale
 # set` returns once the daemon has *accepted* the pref change, not once it has
-# rebuilt the routing table, so the pre-teardown route is still in SC state for
-# a second or two afterwards. A t=0 probe therefore reads the route that is
-# about to be torn down, declares the disconnect clean, and returns before the
-# drop it exists to catch. That is the false-clean `off → off` in menu.log at
-# 2026-08-09T21:34Z — no bounce, no warning, and no internet until a reboot.
+# rebuilt the routing table, so a t=0 probe reads the pre-teardown table and
+# declares the disconnect clean before the drop it exists to catch. That is
+# the false-clean `off → off` in menu.log at 2026-08-09T21:34Z — no bounce, no
+# warning, and no internet until a reboot.
 route_stable_for() {
     local samples="$1" _
     for _ in $(seq 1 "$samples"); do
-        [ -n "$(sc_default_router)" ] || return 1
+        tailscale_physical_default_route >/dev/null || return 1
         sleep 1
     done
     return 0
 }
 
-# Self-heal the exit-node-teardown blackhole: require a route that stays up
-# across the teardown window, and if it drops, give tailscaled a chance to
-# re-elect before bouncing the (pre-captured) primary interface. Surfaces a
-# real failure — log line, notification, non-zero exit — rather than silently
+# True as soon as a physical default route exists within $1 1s samples. Spans
+# the teardown window: the tunnel's `default utun0` goes away and macOS
+# promotes the scoped en0 default, which takes a beat after `tailscale set`.
+route_appears_within() {
+    local samples="$1" _
+    for _ in $(seq 1 "$samples"); do
+        tailscale_physical_default_route >/dev/null && return 0
+        sleep 1
+    done
+    return 1
+}
+
+# Self-heal the exit-node-teardown blackhole: require a physical default route
+# that appears after teardown and stays up, and if it never does, bounce the
+# (pre-captured) primary interface so macOS re-elects one. Surfaces a real
+# failure — log line, notification, non-zero exit — rather than silently
 # pretending the disconnect succeeded.
 restore_default_route() {
     local primary="$1" _
-    # Span the teardown window before believing the route survived it.
-    route_stable_for 6 && return 0
-    # It dropped. tailscaled sometimes re-elects on its own; wait before
-    # reaching for the bounce, which costs the user their Wi-Fi link.
-    for _ in 1 2 3 4; do
-        if route_stable_for 3; then
-            log "default route returned on its own after teardown"
+    # Give tailscaled + macOS the teardown window, then demand stability. A
+    # route that appears and then blinks while macOS promotes it is not a
+    # blackhole, so retry the whole window before reaching for the bounce,
+    # which costs the user their Wi-Fi link.
+    for _ in 1 2 3; do
+        if route_appears_within 8 && route_stable_for 4; then
             return 0
         fi
-        sleep 2
+        log "default route blinked during teardown; re-checking"
     done
     log "disconnect blackholed the default route; bouncing ${primary:-unknown}"
     if ! bounce_interface "$primary"; then
@@ -134,10 +141,10 @@ restore_default_route() {
     return 1
 }
 
-# Self-heal the *other* half of the teardown, and the one that actually bites:
-# tailscaled leaves DNS pointed at Mullvad's resolver, which is reachable only
-# through the tunnel it just tore down. The default route stays healthy
-# throughout, which is why restore_default_route above never catches this.
+# Self-heal the *other* half of the teardown: tailscaled leaves DNS pointed at
+# Mullvad's resolver, which is reachable only through the tunnel it just tore
+# down. The default route can stay healthy throughout, which is why
+# restore_default_route above does not catch this one.
 # See CLAUDE.md "Tailscale daemon" and tailscale_dns_healthy in the lib.
 restore_dns() {
     # Same grace the route check gets: the DNS manager re-applies a beat after
@@ -226,11 +233,11 @@ else
 fi
 
 # Clearing a Mullvad exit node can blackhole traffic two independent ways, so
-# verify both before calling the disconnect clean. DNS is the one that actually
-# fires in practice; the route drop is kept because it is cheap to check and
-# was observed at least once. Run both even if the first fails — reporting only
-# half a broken teardown is what sent us chasing routes for months. See
-# CLAUDE.md "Tailscale daemon".
+# verify both before calling the disconnect clean. Both fire in practice: the
+# route drop (2026-09-19: raw `ping 1.1.1.1` dead, no en0 default in the
+# table) and the stale resolver. Run both even if the first fails — reporting
+# only half a broken teardown is what sent us chasing the wrong one for
+# months. See CLAUDE.md "Tailscale daemon".
 if $IS_MAC && [ -z "$host" ]; then
     teardown_rc=0
     restore_default_route "$primary_if" || teardown_rc=5

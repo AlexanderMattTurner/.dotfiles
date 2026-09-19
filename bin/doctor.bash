@@ -549,6 +549,17 @@ if $IS_MAC; then
             else
                 fail "Tailscale DNS" "system resolver answers nothing (stale VPN resolver?) — run: $ts set --accept-dns=false; $ts set --accept-dns=true"
             fi
+            # The route-drop blackhole: macOS left with no physical default
+            # route (only the tunnel's, or none). tailscale-set-exit-node.bash
+            # bounces Wi-Fi for this on disconnect, but a drop that survives it
+            # or happens with no disconnect to hook lands here.
+            if ! tailscale_route_probe_available; then
+                skip "Tailscale default route" "netstat not installed"
+            elif route_if="$(tailscale_physical_default_route)"; then
+                pass "Tailscale default route via $route_if"
+            else
+                fail "Tailscale default route" "no physical default route in the kernel table — bounce Wi-Fi: networksetup -setairportpower en0 off; networksetup -setairportpower en0 on"
+            fi
             ;;
         eperm)
             fail "Tailscale daemon" "CLI denied access to socket (run: sudo launchctl kickstart -k system/com.$USER.tailscaled)"

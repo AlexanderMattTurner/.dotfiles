@@ -101,7 +101,13 @@ def _skew(
     )
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     return subprocess.run(
-        ["bash", "-c", f'source "{RESOLVE_SH}" && tailscale_version_skew "$1"', "_", str(stub)],
+        [
+            "bash",
+            "-c",
+            f'source "{RESOLVE_SH}" && tailscale_version_skew "$1"',
+            "_",
+            str(stub),
+        ],
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
@@ -271,7 +277,9 @@ def test_dns_probe_missing_never_false_alarms_but_is_reported(tmp_path: Path) ->
     check it never ran, per the CLAUDE.md optional-tool rule.
     """
     (tmp_path / "bin").mkdir(exist_ok=True)
-    assert _run_dns(tmp_path, "tailscale_dns_healthy", isolate_path=True).returncode == 0
+    assert (
+        _run_dns(tmp_path, "tailscale_dns_healthy", isolate_path=True).returncode == 0
+    )
     avail = _run_dns(tmp_path, "tailscale_dns_probe_available", isolate_path=True)
     assert avail.returncode != 0
     # Not the 127 of a function that doesn't exist — that would pass for free.
@@ -365,3 +373,99 @@ def test_dns_reapply_reports_a_failed_toggle(tmp_path: Path) -> None:
     rc, issued = _reapply(tmp_path, "true", refuse="--accept-dns=true")
     assert rc != 0
     assert issued == ["--accept-dns=false", "--accept-dns=true"]
+
+
+# ── tailscale_physical_default_route ────────────────────────────────────────
+#
+# Real `netstat -rn -f inet` shapes. The 2026-09-19 blackhole is the third
+# one: SystemConfiguration still reported a Router, but the kernel table held
+# only the tunnel's default and no en0 row at all, which is why the SC-based
+# probe the applier used to run called that disconnect clean.
+
+ROUTES_OFF_HEALTHY = """\
+Routing tables
+
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            192.168.8.1        UGScg                 en0
+100.64/10          utun0              USc                 utun0
+127                127.0.0.1          UCS                   lo0
+169.254            link#14            UCS                   en0      !
+192.168.8          link#14            UCS                   en0      !
+"""
+
+# Exit node engaged: tailscale owns `default`, macOS keeps the scoped (I) en0
+# default underneath — the row that gets promoted on teardown.
+ROUTES_ON_HEALTHY = """\
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            utun0              UScg                utun0
+default            192.168.8.1        UGScIg                en0
+100.64/10          utun0              USc                 utun0
+"""
+
+ROUTES_BLACKHOLE = """\
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            utun0              UScg                utun0
+100.64/10          utun0              USc                 utun0
+127                127.0.0.1          UCS                   lo0
+169.254            link#14            UCS                   en0      !
+192.168.8.1/32     link#14            UCS                   en0      !
+"""
+
+# OrbStack-style reject default: `route get default` succeeds, the box is off.
+ROUTES_REJECT_ONLY = """\
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            link#20            UCSRg              bridge100
+"""
+
+# The same stale OrbStack row without a reject flag, plus the tunnel. Neither
+# is a medium the machine can egress on; a utun denylist would accept it.
+ROUTES_VIRTUAL_ONLY = """\
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            utun0              UScg                utun0
+default            link#20            UCSI               bridge100      !
+"""
+
+
+def _route(tmp_path: Path, table: str) -> subprocess.CompletedProcess[str]:
+    _stub(tmp_path, "netstat", f'#!/bin/sh\ncat <<"EOF"\n{table}EOF\n')
+    return _run_dns(tmp_path, "tailscale_physical_default_route")
+
+
+def test_route_present_when_exit_node_is_off(tmp_path: Path) -> None:
+    proc = _route(tmp_path, ROUTES_OFF_HEALTHY)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "en0"
+
+
+def test_route_present_under_an_engaged_exit_node(tmp_path: Path) -> None:
+    """The scoped en0 default under `default utun0` counts: it is what macOS
+    promotes on teardown, so its presence — not the tunnel's row — is health."""
+    proc = _route(tmp_path, ROUTES_ON_HEALTHY)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "en0"
+
+
+def test_route_absent_in_the_blackhole(tmp_path: Path) -> None:
+    """Only the tunnel's default, no en0 row: the 2026-09-19 state."""
+    proc = _route(tmp_path, ROUTES_BLACKHOLE)
+    assert proc.returncode == 1
+    assert proc.stdout.strip() == ""
+
+
+def test_route_ignores_reject_defaults(tmp_path: Path) -> None:
+    assert _route(tmp_path, ROUTES_REJECT_ONLY).returncode == 1
+
+
+def test_route_ignores_virtual_bridge_defaults(tmp_path: Path) -> None:
+    """A `bridge100` default is not a way out of the machine."""
+    assert _route(tmp_path, ROUTES_VIRTUAL_ONLY).returncode == 1
+
+
+def test_route_absent_when_netstat_is_missing(tmp_path: Path) -> None:
+    proc = _run_dns(tmp_path, "tailscale_route_probe_available", isolate_path=True)
+    assert proc.returncode != 0
