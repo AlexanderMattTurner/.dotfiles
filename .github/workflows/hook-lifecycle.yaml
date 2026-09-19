@@ -66,8 +66,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fish
 
-      - name: Install pre-commit
-        run: uv tool install pre-commit --with pre-commit-uv
+      - name: Install pytest + pre-commit
+        # pytest too: three .pre-commit-config.yaml hooks invoke it.
+        run: |
+          uv tool install pytest
+          uv tool install pre-commit --with pre-commit-uv
 
       - name: Run hook lifecycle
         run: bash .github/scripts/run-hook-lifecycle.sh
