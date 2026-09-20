@@ -48,6 +48,8 @@ source "$DOTFILES_DIR/bin/lib/claude-guard-pin.sh"
 # call the pass/fail reporters defined below and bump MANAGED_LINK_FAIL.
 # shellcheck source=lib/doctor-checks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/doctor-checks.sh"
+# shellcheck source=lib/disk-space.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/disk-space.sh"
 
 if [[ -t 1 ]]; then
     GREEN='\033[0;32m'
@@ -445,6 +447,51 @@ no-tmux)
     ;;
 *)
     fail "tmux snapshots" "unhandled tmux_snapshot_health state: $TMUX_SNAPSHOT_STATE"
+    ;;
+esac
+
+# ── Disk space ──────────────────────────────────────────────────────────────
+section "Disk space"
+
+# The remedies are spelled out rather than hidden behind a wrapper: each is the
+# tool's own prune, so it stays correct as those tools change. Only the lima
+# line is destructive, which is why it names `limactl list` first — a raw VM
+# image never gives freed guest blocks back, so deleting the instance is the
+# only way to reclaim it, and that is a decision, not a cleanup.
+_disk_remedies() {
+    printf '%s\n' \
+        "reclaim: brew cleanup --prune=all; pnpm store prune; uv cache prune;" \
+        "         pre-commit gc; limactl prune; glovebox gc" \
+        "VM images never shrink — review with: limactl list"
+}
+
+DISK_STATE="$(disk_space_health)"
+DISK_FREE="${DISK_STATE#*:}"
+# Suppressed under a whole GiB: a rounded-to-zero figure is noise, not a lead.
+DISK_LIMA="$(disk_lima_image_kib)"
+if [[ -n "$DISK_LIMA" ]] && ((DISK_LIMA / 1048576 >= 1)); then
+    DISK_LIMA=" — lima VM images hold $((DISK_LIMA / 1048576))GiB"
+else
+    DISK_LIMA=""
+fi
+
+case "$DISK_STATE" in
+ok:*)
+    pass "free space (${DISK_FREE}GiB)"
+    ;;
+low:*)
+    fail "free space" "$(printf '%sGiB free, under %sGiB%s\n%s' \
+        "$DISK_FREE" "$DISK_LOW_GIB" "$DISK_LIMA" "$(_disk_remedies)")"
+    ;;
+critical:*)
+    fail "free space" "$(printf '%sGiB free, under %sGiB — writes will start failing%s\n%s' \
+        "$DISK_FREE" "$DISK_CRITICAL_GIB" "$DISK_LIMA" "$(_disk_remedies)")"
+    ;;
+unknown)
+    skip "free space" "df unavailable or unparseable"
+    ;;
+*)
+    fail "free space" "unhandled disk_space_health state: $DISK_STATE"
     ;;
 esac
 
