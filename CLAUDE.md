@@ -15,10 +15,8 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   `~/.local/bin/glovebox` and owns Claude Code version updates and PATH
   precedence from then on. `doctor.bash` only checks that the checkout
   is present and that `glovebox` on PATH resolves into it.
-  `apps/fish/functions/claude.fish` execs `agent-glovebox/bin/glovebox`,
-  so an interactive `claude` starts a sandboxed session; `command claude`
-  is the unsandboxed escape hatch glovebox deliberately leaves alone.
-  Nothing in `.claude/` symlinks into it.
+  Nothing else here wraps or dispatches into it, and nothing in
+  `.claude/` symlinks into it.
 - `bin/setup_llm.bash` — AI tooling installer invoked from `setup.bash`:
   claude-code (pnpm), aider/llm/wut (uv), VSCodium + extensions,
   llm-based commit-msg template hook. claude-code is pinned to the
@@ -171,13 +169,11 @@ never blocks on input.
 - **There is no multi-account rotation.** `bin/claude-account.bash`,
   `bin/lib/claude-account-lib.sh`, the loopback proxy
   `bin/claude-rotate-proxy.py`, and their doctor checks were deleted —
-  don't resurrect them. Claude Code signs in on its own, and glovebox
-  owns credentials for sandboxed sessions. The `claude` fish function
-  (`apps/fish/functions/claude.fish`) is now a thin wrapper that execs
-  `agent-glovebox/bin/glovebox`; `command claude` remains the
-  unsandboxed escape hatch. An exported `ANTHROPIC_API_KEY` still
-  outranks subscription credentials and silently bills per token, which
-  is why the wrapper warns about one rather than exporting it.
+  don't resurrect them, nor the `claude` fish wrapper
+  (`apps/fish/functions/claude.fish`) that was deleted alongside them.
+  Claude Code signs in on its own. An exported `ANTHROPIC_API_KEY`
+  outranks subscription credentials and silently bills per token; never
+  export one here.
 - Secrets must never appear on argv. Pipe stdin → stdin between `bw`,
   `envchain`, and child commands. See `bin/bw-add-secret.bash` for the
   pattern.
@@ -198,9 +194,9 @@ The AI safety monitor lives in `agent-glovebox/` and is that repo's
 concern, not this one — it runs inside the sandbox glovebox starts, with
 its policy, audit log and keys outside the monitored model's reach. This
 repo ships no monitor hook and no hardening script; do not add one here.
-On a plain `command claude` session (the unsandboxed escape hatch) there
-is no monitor at all, and protection is Claude Code's own permission
-prompts — never `--dangerously-skip-permissions`.
+On a plain `claude` session there is no monitor at all, and protection is
+Claude Code's own permission prompts — never
+`--dangerously-skip-permissions`.
 
 ### AI provider routing
 
@@ -222,6 +218,61 @@ prompts — never `--dangerously-skip-permissions`.
   match Venice's `/v1/models` and rotate, so treat these as examples, not
   a frozen list). The `mods` fish function wraps invocations in
   `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the Keychain.
+
+### Disk space
+
+This machine reached 98% full (11GiB free of 460GiB) with nothing flagging
+it. Two different things eat the disk, and they need opposite responses:
+
+- **Package-manager stores** (pnpm, uv, Homebrew downloads, pre-commit)
+  keep every version forever until explicitly pruned — pnpm's store alone
+  held 7.4GiB, of which 5.3GiB was unreferenced. This *is* garbage. Each
+  has its own prune (`pnpm store prune`, `uv cache prune`, `brew cleanup
+  --prune=all`, `pre-commit gc`, `limactl prune`, `glovebox gc`); doctor
+  names them rather than wrapping them, so they stay correct as those
+  tools change.
+- **glovebox's lima kata VMs** are the bigger number (five `gb-kata*`
+  instances reached 66GiB between them; one hit 33GiB while in `Broken`
+  state — stale sockets from a launch that died, not a running VM) but
+  they are **not** garbage, and doctor must not offer to prune them.
+
+**Do not "fix" the VM images by adding TRIM — discard is already plumbed
+end to end, and verified.** The chain is `container → devmapper thin pool
+(discard_passdown) → data.img (sparse) → ext4 / (mounted discard) → vda
+raw image (sparse) → APFS`; containerd sets `discard_blocks = true` and
+`dmsetup status` reports `discard_passdown`. Measured on a live instance:
+**10.12GiB allocated on the host against 9.8GiB used in-guest**, with
+`fstrim` finding **0B** left to return, because online discard had already
+done it. Freed guest blocks come back on their own.
+
+Every layer is likewise provisioned generously and allocated sparsely, so
+a configured size is a ceiling and never a cost — the 40GiB `disk:` in
+`lima.yaml` was 10.12GiB on disk, and the 20GiB `data.img` was 2.2GiB.
+**Never read a provisioned size as consumption.** A VM's footprint is real,
+live content: an Ubuntu base (~3.2GiB), Kata Containers shipping its own
+guest kernel and rootfs (~2GiB), containerd plus its thin pool (~3GiB),
+and the signing/proxy tooling (~320MiB) — roughly 9GiB is the floor for a
+nested-virt sandbox, and the rest is images someone actually pulled.
+
+So there is nothing for a prune to reclaim; `limactl delete` is the only
+lever, which makes it a decision rather than a cleanup. Doctor reports the
+number and points at `limactl list` instead of suggesting a command.
+
+`disk_space_health` in `bin/lib/disk-space.sh` is the single classifier
+(`ok:<gib>` / `low:<gib>` / `critical:<gib>` / `unknown`). It measures
+**absolute free GiB, not percent used**: percent is a ratio to total
+capacity, but what actually breaks a build or a VM boot is headroom. It
+answers `unknown` — never `ok` — when `df` is missing or its columns don't
+parse, for the same reason `tmux_snapshot_health` only under-reports: this
+check exists to catch a disk that filled up, and must not invent headroom
+it did not measure. `disk_lima_image_kib` reports KiB rather than GiB so
+its tests need fixtures of kilobytes, not gigabytes; `bin/doctor.bash`
+owns the rounding and suppresses a figure under 1GiB as noise.
+
+Adding a failure mode = new state there + an arm in `bin/doctor.bash`'s
+case + a case in `tests/test_disk_space.py` (which asserts doctor has an
+arm for every state, so skipping the second half fails the suite instead
+of surfacing `unhandled state` at runtime).
 
 ### Backups
 

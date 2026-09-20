@@ -33,7 +33,6 @@ $HOME/.ssh/config|$DOTFILES_DIR/apps/ssh/config|ssh config
 $HOME/.config/mise/config.toml|$DOTFILES_DIR/apps/mise/config.toml|mise config
 $HOME/.config/nvim|$DOTFILES_DIR/apps/nvim|nvim config
 $HOME/.local/bin/bw-node|$DOTFILES_DIR/bin/bw-node|bw-node wrapper
-$HOME/.config/fish/functions/claude.fish|$DOTFILES_DIR/apps/fish/functions/claude.fish|claude fish function
 $HOME/.claude/settings.json|$DOTFILES_DIR/apps/claude-user/settings.json|Claude Code settings
 $HOME/.claude/hooks/gate-pr-skill.py|$DOTFILES_DIR/apps/claude-user/hooks/gate-pr-skill.py|PR-creation gate hook
 $HOME/.claude/CLAUDE.md|$DOTFILES_DIR/apps/claude-user/CLAUDE.md|Claude Code global CLAUDE.md

@@ -29,7 +29,6 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
     - Automatic commit message generation,
     - Aider for CLI coding,
     - VSCodium with Roo Cline extension for privacy-first AI pair programming,
-    - An AI sandbox and security wrapper via the [`agent-glovebox`](https://github.com/AlexanderMattTurner/agent-glovebox) submodule. Also enables worktrees by default.
 
     - `wut` command to explain shell output.
     - `mods` (Charm) for piping shell output to an LLM, e.g. `<failing-cmd> 2>&1 | mods 'what broke?'`. Routes through Venice via `apps/mods/mods.yml`.
@@ -58,7 +57,6 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
 
     - `AGENTS.md` symlinks to `CLAUDE.md` so Cursor/Aider/OpenCode pick up the same project context Claude Code uses.
     - `.mcp.json` configures the filesystem MCP server scoped to `~/.dotfiles` for Claude Code sessions in this repo.
-    - `apps/fish/functions/claude.fish` makes an interactive `claude` start a sandboxed session through [glovebox](https://github.com/AlexanderMattTurner/agent-glovebox), which runs the agent in a microVM behind an outgoing-traffic firewall with a second model watching every tool call (the [AI control](https://arxiv.org/abs/2312.06942) pattern). That repo is a separate, user-managed checkout at `agent-glovebox/`; `command claude` is the unsandboxed escape hatch.
     - **Push notifications** for monitor alerts: run `bash bin/setup-ntfy.bash` to configure [ntfy.sh](https://ntfy.sh) — glovebox's monitor sends a push to your phone on ASK-tier escalations (potential misalignment).
 
 13. macOS keyboard-driven WM: `aerospace` for tiling.
