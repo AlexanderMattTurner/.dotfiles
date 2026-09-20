@@ -374,17 +374,29 @@ provisioned ceiling, because this machine runs near 88% full and works
 fine — a doctor that is red when nothing is wrong trains you to stop
 reading it.
 
+`unknown` is a SKIP rather than a FAIL: doctor prints SKIP even in its
+default non-verbose mode, so an unmeasurable disk is still surfaced, but a
+check that never ran is not the same claim as a check that failed.
+
+Classifying and reporting are deliberately separate files. The classifier
+is `bin/lib/disk-space.sh`; the reporter is `disk_space_check` (with
+`_disk_lima_note` and `_disk_remedies`) in `bin/lib/doctor-checks.sh`, and
+`bin/doctor.bash` only calls it. That split is what `doctor-checks.sh`
+already exists for — so doctor's assertions have direct unit tests instead
+of only being exercised through a full integration run. It costs one
+coupling: `doctor-checks.sh` needs `disk-space.sh` sourced alongside it.
+
 `disk_lima_image_kib` reports KiB rather than GiB so its tests need
-fixtures of kilobytes, not gigabytes; `bin/doctor.bash` owns the rounding
+fixtures of kilobytes, not gigabytes; `_disk_lima_note` owns the rounding
 and suppresses a figure under 1GiB as noise. It is called only from the
 unhealthy branches, because `du`-ing every instance is wasted work on the
 common `ok` path.
 
-Adding a failure mode = new state there + an arm in `bin/doctor.bash`'s
-case + a case in `tests/test_disk_space.py`. That last one drives the real
-`doctor.bash` rather than grepping its source, because a grep still passes
-after a state is renamed while doctor silently falls through to its
-unhandled arm.
+Adding a failure mode = new state in `disk_space_health` + an arm in
+`disk_space_check`'s case + a case in `tests/test_disk_space.py`. That last
+one executes the real reporter with stub `pass`/`fail`/`skip` recorders
+rather than grepping source, because a grep still passes after a state is
+renamed while the reporter silently falls through to its catch-all arm.
 
 ### Backups
 
