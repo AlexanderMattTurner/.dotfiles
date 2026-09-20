@@ -1,32 +1,29 @@
 # shellcheck shell=bash
 # Free-disk-space health — single source of truth.
 #
-# This machine filled to 98% (11GiB free of 460GiB) before anything noticed,
-# because the things that eat the disk eat it silently: package-manager stores
-# (pnpm, uv, Homebrew downloads, pre-commit) keep every version until pruned,
-# and glovebox's lima kata VMs are tens of GiB apiece.
+# Why free GiB rather than percent used, why the thresholds are what they are,
+# and why a lima image is not prunable: see CLAUDE.md "Disk space".
 #
-# Health is measured against *free* GiB rather than percent used: percent is a
-# ratio to total capacity, but what actually breaks a build, a VM boot or a
-# Duplicati run is absolute headroom.
-#
-# Consumers that must stay in sync (see CLAUDE.md "Disk space"):
-# bin/doctor.bash, tests/test_disk_space.py.
+# Consumers that must stay in sync: bin/lib/doctor-checks.sh (disk_space_check),
+# tests/test_disk_space.py.
 
-# Free space below this many GiB is worth acting on; below the critical
-# threshold, things start failing outright.
-#
-# Deliberately not set to a kata VM's 40GiB provisioned ceiling. This machine
-# routinely runs near 88% full and works fine, so a 40GiB threshold would be a
-# standing FAIL during normal operation — and a doctor that is red when nothing
-# is wrong trains you to stop reading it, which costs more than the check buys.
+# Overridable so tests can drive each state without a full disk.
 DISK_LOW_GIB="${DISK_LOW_GIB:-25}"
 DISK_CRITICAL_GIB="${DISK_CRITICAL_GIB:-10}"
 
 # Rounding lives here rather than in the consumer, so no caller needs to know
-# what unit the readings are in.
+# what unit the readings are in. Truncates: 1.5GiB reads as 1.
+#
+# The digits-only guard is not decorative. An unvalidated argument inside
+# `$(( ))` is both a `set -u` crash when absent (doctor runs `set -u`, and this
+# is sourced into its global namespace) and arbitrary command execution when
+# present — bash evaluates array subscripts recursively, so `a[$(cmd)]` runs
+# `cmd`. The input here is `df`/`du` output, i.e. external. Validating once here
+# means no caller has to be trusted to have done it.
 disk_kib_to_gib() {
-    printf '%s\n' "$(($1 / 1048576))"
+    local kib="${1:-}"
+    case "$kib" in '' | *[!0-9]*) return 2 ;; esac
+    printf '%s\n' "$((kib / 1048576))"
 }
 
 # Print integer GiB free on the volume holding DISK_SPACE_TARGET (default $HOME;
@@ -77,20 +74,19 @@ disk_space_health() {
 }
 
 # Print total KiB held by lima VM instances, or nothing when there are none.
+# Not reclaimable garbage — see CLAUDE.md "Disk space" for why doctor reports
+# this number without offering a prune.
 #
-# Sized separately from the prunable caches, and reported *without* a remedy,
-# because unlike them it is not reclaimable garbage: discard is plumbed the
-# whole way down (see CLAUDE.md "Disk space"), so an image already tracks the
-# guest's live usage and a prune has nothing to reclaim. `limactl delete` is the
-# only lever, which makes it a decision rather than a cleanup — so doctor prints
-# the number and points at `limactl list` instead of suggesting a command.
-#
-# Reports KiB, not GiB, so this stays testable with kilobyte fixtures instead of
-# requiring gigabyte-sized ones. `_`-prefixed entries (lima's own `_config` /
-# `_disks`) are not instances and are excluded.
-#
-# Caveat: this sums images wherever LIMA_HOME points, which a relocated
-# LIMA_HOME could place on a different volume from the one measured above.
+# Facts about this code rather than about VMs:
+#   - Reports KiB, not GiB, so it stays testable with kilobyte fixtures instead
+#     of requiring gigabyte-sized ones. The caller owns rounding.
+#   - `_`-prefixed entries (lima's own `_config` / `_disks`) are not instances.
+#   - Sums images wherever LIMA_HOME points, which a relocated LIMA_HOME could
+#     place on a different volume from the one disk_free_gib measured.
+#   - A missing `du` or an unreadable instance yields no output, so the note is
+#     silently omitted. That is deliberate and the opposite of disk_free_gib's
+#     `unknown`-never-`ok` rule: this figure is advisory context, not the
+#     verdict, so failing to size it must not change the verdict.
 disk_lima_image_kib() {
     local dir="${LIMA_HOME:-$HOME/.lima}"
     [ -d "$dir" ] || return 0

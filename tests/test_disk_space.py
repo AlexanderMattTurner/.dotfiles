@@ -1,23 +1,21 @@
-"""bin/lib/disk-space.sh — free-space classification and lima image sizing.
+"""bin/lib/disk-space.sh + disk_space_check — free-space health.
 
-Drives the lib against the real `df` and `du` on a real path rather than
-stubbing their replies, and moves the *thresholds* around the machine's actual
-free space to reach each state. Stubbing df wholesale would only test that the
-lib can parse a string this file wrote; the parsing is the part that breaks
-across platforms, so it stays real. The stubbed cases are the two no real df
-produces on demand: a missing binary, and a record wrapped onto a second line.
+Two layers, tested two ways:
 
-The states must track their consumer, bin/doctor.bash's "Disk space" section.
-That link is tested end-to-end through the real script rather than by grepping
-its source: a source grep still passes after the lib renames a state, while
-doctor silently falls through to its unhandled-state arm at runtime.
-
-The distinction that matters is the one a percent-used figure hides: absolute
-headroom, because a kata VM wants tens of GiB to grow into regardless of how
-large the volume is.
+  - The classifier runs against the real `df`/`du` on a real path, with the
+    *thresholds* moved around the machine's actual free space to reach each
+    state. Stubbing df wholesale would only prove the lib can parse a string
+    this file wrote, and the parsing is the part that breaks across platforms.
+    The stubbed cases are the ones no real df produces on demand.
+  - The reporting lives in bin/lib/doctor-checks.sh as `disk_space_check`, so
+    it is driven directly with stub pass/fail/skip recorders — the same trick
+    that file already uses for check_symlink/check_command. That covers every
+    arm in milliseconds; a single end-to-end run then proves doctor.bash
+    actually calls it.
 """
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -27,15 +25,16 @@ REPO = Path(
     subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
 )
 LIB_SH = REPO / "bin" / "lib" / "disk-space.sh"
+CHECKS_SH = REPO / "bin" / "lib" / "doctor-checks.sh"
 
 REAL_PATH = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
 
 
-def _run_lib(
-    snippet: str, extra_env: dict[str, str] | None = None, expect_rc: int = 0
-) -> str:
-    proc = subprocess.run(
-        ["bash", "-c", f'source "{LIB_SH}" && {snippet}'],
+def _bash(
+    snippet: str, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", snippet],
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
@@ -46,6 +45,12 @@ def _run_lib(
             **(extra_env or {}),
         },
     )
+
+
+def _run_lib(
+    snippet: str, extra_env: dict[str, str] | None = None, expect_rc: int = 0
+) -> str:
+    proc = _bash(f'source "{LIB_SH}" && {snippet}', extra_env)
     assert proc.returncode == expect_rc, (
         f"rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
     )
@@ -69,6 +74,14 @@ def _health(target: Path, low: int, critical: int) -> str:
     )
 
 
+def _write_stub(directory: Path, name: str, body: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    stub = directory / name
+    stub.write_text(body)
+    stub.chmod(0o755)
+    return stub
+
+
 # ── rounding ────────────────────────────────────────────────────────────────
 
 
@@ -79,10 +92,33 @@ def _health(target: Path, low: int, critical: int) -> str:
 def test_kib_to_gib_truncates(kib: int, gib: int) -> None:
     """Truncation, not rounding: 1.5GiB must read as 1, never 2.
 
-    doctor suppresses a sub-1GiB figure as noise, so the 524288 case is the one
-    that decides whether a note is printed at all.
+    The reporter suppresses a sub-1GiB figure, so the 524288 case decides
+    whether a note is printed at all.
     """
     assert _run_lib(f"disk_kib_to_gib {kib}") == str(gib)
+
+
+@pytest.mark.parametrize("bad", ["", "abc", "12x", "-5", "1 2"])
+def test_kib_to_gib_refuses_non_digits(bad: str) -> None:
+    """Arithmetic on unvalidated input is both a `set -u` crash and code
+    execution: bash evaluates array subscripts recursively, so `a[$(cmd)]` runs
+    `cmd`. The readings come from df/du, i.e. outside this repo."""
+    _run_lib(f"disk_kib_to_gib {shlex.quote(bad)}", expect_rc=2)
+
+
+def test_kib_to_gib_does_not_execute_its_argument(tmp_path: Path) -> None:
+    """The concrete exploit, pinned: a subscript payload must not run."""
+    canary = tmp_path / "canary"
+    payload = f"a[$(touch {canary})]"
+    _run_lib(f"disk_kib_to_gib {shlex.quote(payload)}", expect_rc=2)
+    assert not canary.exists(), "argument was evaluated as arithmetic"
+
+
+def test_kib_to_gib_survives_no_argument() -> None:
+    """Called with nothing under `set -u`, it must return, not abort."""
+    proc = _bash(f'set -u; source "{LIB_SH}"; disk_kib_to_gib; echo "rc=$?"')
+    assert "rc=2" in proc.stdout, f"{proc.stdout!r} {proc.stderr!r}"
+    assert "unbound variable" not in proc.stderr
 
 
 # ── free-space classification ───────────────────────────────────────────────
@@ -117,58 +153,71 @@ def test_thresholds_classify(
     assert state == f"{expected}:{free}"
 
 
-def test_missing_df_is_unknown(tmp_path: Path) -> None:
-    """Headroom must read as unknowable, never as healthy, when df is absent."""
-    empty_bin = tmp_path / "bin"
-    empty_bin.mkdir()
-    # The override is scoped to the call, not the process environment: emptying
-    # PATH outright would also hide `bash` from the launcher.
-    assert (
-        _run_lib(
-            f'PATH="{empty_bin}" disk_space_health',
-            {"DISK_SPACE_TARGET": str(tmp_path)},
-        )
-        == "unknown"
-    )
+# A df that emits the POSIX single-line record only when -P is present, and the
+# wrapped two-line form otherwise — which is what real df does with a long
+# device name. Available is 39230464 KiB == 37 GiB after truncation.
+_DF_STUB = """#!/bin/sh
+echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+case "$*" in
+*-P*) echo '/dev/disk1s5 489350984 396135176 39230464 91% /' ;;
+*)
+    echo '/dev/mapper/a-very-long-device-name-that-wraps-the-record'
+    echo '  489350984 396135176 39230464  91% /'
+    ;;
+esac
+"""
 
 
-def test_wrapped_df_record_is_unknown(tmp_path: Path) -> None:
-    """The failure `df -P` exists to prevent: a long device name wrapping.
+def test_df_is_called_with_dash_P(tmp_path: Path) -> None:
+    """Pins the -P flag rather than merely asserting a bad parse is caught.
 
-    Without -P, df breaks the record across two lines, so row 2 holds only the
-    filesystem name and the numbers land on row 3 — every column shifts. Reading
-    row 2 field 4 then yields a filesystem name or nothing, never a size. This
-    stub reproduces that shape, so dropping -P would turn this red.
+    Without -P, df wraps a long device name onto a second line and every column
+    shifts, so row 2 field 4 is a device name instead of a size. This stub
+    reproduces exactly that, conditional on the flag — so dropping -P from the
+    call flips the result to `unknown` and turns this red.
     """
     stub_bin = tmp_path / "bin"
-    stub_bin.mkdir()
-    stub = stub_bin / "df"
-    stub.write_text(
-        "#!/bin/sh\n"
-        "echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'\n"
-        "echo '/dev/mapper/a-very-long-device-name-that-wraps-the-record'\n"
-        "echo '  489350984 396135176 39230464  91% /'\n"
-    )
-    stub.chmod(0o755)
+    _write_stub(stub_bin, "df", _DF_STUB)
     assert (
         _run_lib(
             "disk_space_health",
-            {"PATH": f"{stub_bin}:{REAL_PATH}", "DISK_SPACE_TARGET": str(tmp_path)},
+            {
+                "PATH": f"{stub_bin}:{REAL_PATH}",
+                "DISK_SPACE_TARGET": str(tmp_path),
+                "DISK_LOW_GIB": "0",
+                "DISK_CRITICAL_GIB": "0",
+            },
         )
-        == "unknown"
+        == "ok:37"
     )
 
 
-def test_unparseable_df_exits_2(tmp_path: Path) -> None:
-    """The documented exit-code contract, asserted directly rather than only
-    through the `unknown` string it produces."""
-    empty_bin = tmp_path / "bin"
-    empty_bin.mkdir()
-    _run_lib(
-        f'PATH="{empty_bin}" disk_free_gib',
-        {"DISK_SPACE_TARGET": str(tmp_path)},
-        expect_rc=2,
-    )
+@pytest.mark.parametrize("flavour", ["missing", "wrapped"])
+def test_unreadable_df_is_unknown_and_exits_2(tmp_path: Path, flavour: str) -> None:
+    """Headroom must read as unknowable, never as healthy — by either route.
+
+    `missing` removes df from PATH; `wrapped` keeps it but shifts the columns.
+    Both must reach `unknown`, and both must surface as the documented rc=2 from
+    disk_free_gib rather than only as the string derived from it.
+    """
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    if flavour == "wrapped":
+        # Always wraps: a df that ignores -P, i.e. the parse guard itself.
+        _write_stub(
+            stub_bin,
+            "df",
+            "#!/bin/sh\necho 'Filesystem blocks'\necho '/dev/long-name-only'\n",
+        )
+        path = f"{stub_bin}:{REAL_PATH}"
+    else:
+        path = str(stub_bin)
+
+    env = {"DISK_SPACE_TARGET": str(tmp_path)}
+    # PATH is overridden inside the call, not in the environment: emptying it
+    # outright would also hide `bash` from the launcher.
+    assert _run_lib(f'PATH="{path}" disk_space_health', env) == "unknown"
+    _run_lib(f'PATH="{path}" disk_free_gib', env, expect_rc=2)
 
 
 def test_nonexistent_target_is_unknown(tmp_path: Path) -> None:
@@ -231,76 +280,131 @@ def test_files_in_lima_home_are_ignored(tmp_path: Path) -> None:
     assert int(_lima_kib(lima)) == only_instance
 
 
-# ── consumer contract, end to end ───────────────────────────────────────────
+# ── the reporter (bin/lib/doctor-checks.sh) ─────────────────────────────────
+
+# Stub reporters standing in for doctor's counters, exactly as
+# tests/test_doctor_checks.py does for check_symlink/check_command.
+_RECORDERS = """
+pass() { printf 'PASS %s\\n' "$1"; }
+fail() { printf 'FAIL %s\\n' "$1"; [ -n "${2:-}" ] && printf '%s\\n' "$2"; return 0; }
+skip() { printf 'SKIP %s (%s)\\n' "$1" "$2"; }
+"""
 
 
-def _doctor_report(env_overrides: dict[str, str]) -> str:
-    """Run the real doctor.bash and return its whole report.
+def _check(state: str, lima_kib: str = "", low: str = "25", crit: str = "10") -> str:
+    """Drive disk_space_check with the classifier stubbed to `state`."""
+    snippet = (
+        f'source "{LIB_SH}"\n'
+        f'source "{CHECKS_SH}"\n'
+        f"{_RECORDERS}\n"
+        f"disk_space_health() {{ printf '%s\\n' {shlex.quote(state)}; }}\n"
+        f"disk_lima_image_kib() {{ printf '%s' {shlex.quote(lima_kib)}; }}\n"
+        "disk_space_check\n"
+    )
+    proc = _bash(snippet, {"DISK_LOW_GIB": low, "DISK_CRITICAL_GIB": crit})
+    assert proc.returncode == 0, f"{proc.stdout!r} {proc.stderr!r}"
+    return proc.stdout
 
-    doctor exits non-zero whenever any check fails, which is expected here and
-    unrelated to this section, so the status is ignored and the output parsed.
+
+@pytest.mark.parametrize(
+    "state, marker, detail",
+    [
+        ("ok:56", "PASS free space (56GiB)", ""),
+        ("low:20", "FAIL free space", "20GiB free, under 25GiB"),
+        ("critical:5", "FAIL free space", "5GiB free, under 10GiB"),
+        ("unknown", "SKIP free space", ""),
+        ("warn:3", "FAIL free space", "unhandled disk_space_health state: warn:3"),
+    ],
+    ids=["ok", "low", "critical", "unknown", "unrecognised"],
+)
+def test_every_state_reaches_an_arm(state: str, marker: str, detail: str) -> None:
+    """Each state gets its own arm, and each arm reports the right figure.
+
+    The low and critical cases carry *different* thresholds (25 vs 10) and pin
+    the number printed, so swapping DISK_LOW_GIB for DISK_CRITICAL_GIB in either
+    arm turns this red — with identical thresholds the two are indistinguishable.
+
+    The `warn:3` case is the point of the catch-all: renaming a state in the
+    classifier without adding its arm must be loud, not silent.
+    """
+    out = _check(state)
+    assert marker in out, out
+    if detail:
+        assert detail in out, out
+
+
+def test_critical_names_its_consequence() -> None:
+    assert "writes will start failing" in _check("critical:5")
+
+
+def test_low_does_not_claim_writes_are_failing() -> None:
+    """The escalation has to mean something — low must not borrow the warning."""
+    assert "writes will start failing" not in _check("low:20")
+
+
+@pytest.mark.parametrize(
+    "lima_kib, expected",
+    [
+        ("", None),  # no instances at all
+        ("512", None),  # under 1GiB: suppressed as noise
+        ("1048576", "lima VM images hold 1GiB"),
+        ("35651584", "lima VM images hold 34GiB"),
+    ],
+    ids=["none", "sub-gib", "one-gib", "many-gib"],
+)
+def test_lima_note_is_sized_and_suppressed(lima_kib: str, expected: str | None) -> None:
+    """The rounding the reporter owns, including the sub-1GiB suppression that
+    the classifier's KiB return type exists to make testable."""
+    out = _check("low:20", lima_kib=lima_kib)
+    if expected is None:
+        assert "lima VM images" not in out, out
+    else:
+        assert expected in out, out
+
+
+def test_remedies_are_offered_only_when_unhealthy() -> None:
+    assert "reclaim:" in _check("low:20")
+    assert "reclaim:" not in _check("ok:56")
+
+
+def test_remedy_block_aligns_under_the_detail_column() -> None:
+    """fail() indents only the first line of its detail, so the continuation
+    lines carry their own 7 spaces. Without them the block breaks the report's
+    left margin."""
+    detail = [ln for ln in _check("low:20").splitlines() if "reclaim:" in ln]
+    assert detail and detail[0].startswith(" " * 7), detail
+
+
+# ── wiring, end to end ──────────────────────────────────────────────────────
+
+
+def test_doctor_runs_the_disk_check() -> None:
+    """One real doctor.bash run, to prove the section is actually wired in.
+
+    Everything above drives disk_space_check directly; this is the only claim
+    that needs the whole script, so it is the only place that pays for it.
     """
     proc = subprocess.run(
         ["bash", str(REPO / "bin" / "doctor.bash"), "--no-refresh", "--verbose"],
-        env={**os.environ, **env_overrides},
+        env={**os.environ, "DISK_LOW_GIB": "0", "DISK_CRITICAL_GIB": "0"},
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
         timeout=600,
         cwd=REPO,
     )
-    return proc.stdout
-
-
-@pytest.mark.parametrize(
-    "overrides, marker, detail",
-    [
-        ({"DISK_LOW_GIB": "0", "DISK_CRITICAL_GIB": "0"}, "PASS", ""),
-        ({"DISK_LOW_GIB": "999999", "DISK_CRITICAL_GIB": "0"}, "FAIL", "reclaim:"),
-        (
-            {"DISK_LOW_GIB": "999999", "DISK_CRITICAL_GIB": "999999"},
-            "FAIL",
-            "writes will start failing",
-        ),
-        ({"DISK_SPACE_TARGET": "/nonexistent-volume-path"}, "SKIP", ""),
-    ],
-    ids=["ok", "low", "critical", "unknown"],
-)
-def test_doctor_reports_every_state(
-    overrides: dict[str, str], marker: str, detail: str
-) -> None:
-    """Every state the classifier emits must reach a real arm in doctor.
-
-    Driven through the script, so renaming a state in the lib without updating
-    doctor turns this red — where a grep over doctor's source would not, since
-    the old literal is still present in the file. Each case also pins the detail
-    that makes its arm actionable, so the arms cannot collapse into each other.
-    """
-    out = _doctor_report(overrides)
-    labels = [ln for ln in out.splitlines() if "free space" in ln]
-    assert len(labels) == 1, out
-    assert marker in labels[0], labels[0]
-    assert "unhandled" not in out
-    if detail:
-        assert detail in out
-
-
-def test_doctor_suppresses_a_sub_gib_lima_note(tmp_path: Path) -> None:
-    """The rounding doctor owns: under a whole GiB, print no note at all.
-
-    The lib reports KiB precisely so this boundary is testable with a kilobyte
-    fixture; without the suppression the report would read "hold 0GiB".
-    """
-    lima = tmp_path / "lima"
-    _make_instance(lima, "gb-kata", 512)
-
-    out = _doctor_report(
-        {"DISK_LOW_GIB": "999999", "DISK_CRITICAL_GIB": "0", "LIMA_HOME": str(lima)}
-    )
-    assert "free space" in out
-    assert "lima VM images" not in out
+    # doctor exits non-zero if any unrelated check fails, so parse, don't assert
+    # on status.
+    labels = [ln for ln in proc.stdout.splitlines() if "free space" in ln]
+    assert len(labels) == 1, proc.stdout
+    assert "PASS" in labels[0], labels[0]
+    # Pins the measured figure reaching the label, not just the word "free space".
+    assert "GiB)" in labels[0], labels[0]
+    assert "unhandled" not in proc.stdout
 
 
 def test_sourcing_emits_nothing() -> None:
-    """Sourcing must be silent — doctor prints one line per check, not per lib."""
-    assert _run_lib("true") == ""
+    """Silent on both streams — doctor prints one line per check, not per lib."""
+    proc = _bash(f'source "{LIB_SH}"; source "{CHECKS_SH}"')
+    assert proc.stdout == ""
+    assert proc.stderr == ""

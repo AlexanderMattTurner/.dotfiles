@@ -453,55 +453,7 @@ esac
 # ── Disk space ──────────────────────────────────────────────────────────────
 section "Disk space"
 
-# The remedies are spelled out rather than hidden behind a wrapper: each is the
-# tool's own prune, so they stay correct as those tools change. The lima line
-# names `limactl list` instead of a command because a VM image holds live
-# content, not garbage — deleting an instance is a decision, not a cleanup.
-#
-# Continuation lines carry their own 7-space indent: fail() indents only the
-# first line of its detail argument, so without this the block lands flush-left
-# against the report's detail column.
-_disk_remedies() {
-    printf '%s\n' \
-        "       reclaim: brew cleanup --prune=all; pnpm store prune;" \
-        "                uv cache prune; pre-commit gc; limactl prune; glovebox gc" \
-        "       review VM images (not prunable) with: limactl list"
-}
-
-# Sized only on the unhealthy branches: `du` walks every lima instance, which is
-# wasted work on the overwhelmingly common ok path. Suppressed under a whole
-# GiB — a rounded-to-zero figure is noise, not a lead.
-_disk_lima_note() {
-    local kib gib
-    kib="$(disk_lima_image_kib)"
-    [[ -n "$kib" ]] || return 0
-    gib="$(disk_kib_to_gib "$kib")"
-    [[ "$gib" -ge 1 ]] || return 0
-    printf ' — lima VM images hold %sGiB' "$gib"
-}
-
-DISK_STATE="$(disk_space_health)"
-DISK_FREE="${DISK_STATE#*:}"
-
-case "$DISK_STATE" in
-ok:*)
-    pass "free space (${DISK_FREE}GiB)"
-    ;;
-low:*)
-    fail "free space" "$(printf '%sGiB free, under %sGiB%s\n%s' \
-        "$DISK_FREE" "$DISK_LOW_GIB" "$(_disk_lima_note)" "$(_disk_remedies)")"
-    ;;
-critical:*)
-    fail "free space" "$(printf '%sGiB free, under %sGiB — writes will start failing%s\n%s' \
-        "$DISK_FREE" "$DISK_CRITICAL_GIB" "$(_disk_lima_note)" "$(_disk_remedies)")"
-    ;;
-unknown)
-    skip "free space" "df unavailable or unparseable"
-    ;;
-*)
-    fail "free space" "unhandled disk_space_health state: $DISK_STATE"
-    ;;
-esac
+disk_space_check
 
 # ── cron jobs ───────────────────────────────────────────────────────────────
 section "cron"
