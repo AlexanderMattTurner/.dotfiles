@@ -13,7 +13,7 @@
 #
 # Maintenance invariant: every safe_link call in setup.bash should iterate one
 # of these lists rather than hardcoding the pair. Genuinely bespoke entries
-# (the ccr launch agent under claude-guard/) stay inline.
+# (launchd plists, which also need bootout/bootstrap) stay inline.
 managed_symlinks() {
     cat <<EOF
 $HOME/.bashrc|$DOTFILES_DIR/.bashrc|.bashrc
@@ -33,13 +33,10 @@ $HOME/.ssh/config|$DOTFILES_DIR/apps/ssh/config|ssh config
 $HOME/.config/mise/config.toml|$DOTFILES_DIR/apps/mise/config.toml|mise config
 $HOME/.config/nvim|$DOTFILES_DIR/apps/nvim|nvim config
 $HOME/.local/bin/bw-node|$DOTFILES_DIR/bin/bw-node|bw-node wrapper
-$HOME/.local/bin/claude-account|$DOTFILES_DIR/bin/claude-account.bash|claude-account launcher
 $HOME/.config/fish/functions/claude.fish|$DOTFILES_DIR/apps/fish/functions/claude.fish|claude fish function
 $HOME/.claude/settings.json|$DOTFILES_DIR/apps/claude-user/settings.json|Claude Code settings
 $HOME/.claude/hooks/gate-pr-skill.py|$DOTFILES_DIR/apps/claude-user/hooks/gate-pr-skill.py|PR-creation gate hook
-$HOME/.claude/CLAUDE.md|$DOTFILES_DIR/claude-guard/user-config/CLAUDE.md|Claude Code global CLAUDE.md
-$HOME/.claude/commands|$DOTFILES_DIR/claude-guard/user-config/skills|Claude Code slash-command dir
-$HOME/.devcontainer|$DOTFILES_DIR/.devcontainer|.devcontainer
+$HOME/.claude/CLAUDE.md|$DOTFILES_DIR/apps/claude-user/CLAUDE.md|Claude Code global CLAUDE.md
 EOF
     if [[ "$(uname)" == "Darwin" ]]; then
         cat <<EOF

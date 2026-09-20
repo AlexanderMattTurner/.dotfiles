@@ -4,7 +4,7 @@
 #   pnpm_pin_spec <package.json> <package-name>
 #
 # Echoes "<pkg>@<version>" using the devDependencies entry in the given
-# package.json (claude-guard/package.json is the canonical pin source).
+# package.json (agent-glovebox/package.json is the canonical pin source).
 # Falls back to the bare "<pkg>" (i.e. latest) and returns 1 when the
 # file is missing, jq is unavailable, or the pin isn't present — callers
 # decide whether that deserves a WARN. Covered by tests/test_pnpm_pin.py.

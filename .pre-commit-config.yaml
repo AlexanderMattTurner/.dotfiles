@@ -27,7 +27,7 @@ repos:
         # Mirror the explicit file list from the old bin/lint.bash check_shfmt
         # so a stray .bash under apps/ (e.g. apps/swiftbar/vpn.10s.bash) doesn't
         # get reformatted without intent.
-        files: ^(\.bashrc|setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash)|\.claude/hooks/.*\.bash|\.devcontainer/.*\.bash)$
+        files: ^(\.bashrc|setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash))$
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1
@@ -40,7 +40,7 @@ repos:
         # every push. Following the source is the stronger fix than excluding
         # SC1091: the library's own contents get checked at each call site.
         args: [-x, -e, SC2016]
-        files: ^(setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash)|\.claude/hooks/.*\.bash|\.devcontainer/.*\.bash)$
+        files: ^(setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash))$
       - id: shellcheck
         name: shellcheck (.bashrc)
         # .bashrc has no shebang and is sourced, not executed. Tell shellcheck

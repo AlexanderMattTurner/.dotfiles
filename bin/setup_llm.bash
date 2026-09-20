@@ -1,6 +1,6 @@
 #!/bin/bash
-# setup_llm.bash — installer for the AI/LLM tooling layer: claude-code +
-# ccr (pnpm), aider (uv), VSCodium + extensions, wut-cli (uv), llm +
+# setup_llm.bash — installer for the AI/LLM tooling layer: claude-code
+# (pnpm), aider (uv), VSCodium + extensions, wut-cli (uv), llm +
 # commit-message git template hook. Idempotent.
 
 set -euo pipefail
@@ -32,28 +32,24 @@ AIDER_PIN="aider-chat==0.86.2"
 WUT_PIN="wut-cli==1.0.8"
 LLM_PIN="llm==0.31"
 
-# ── claude-code + claude-code-router (ccr) ──────────────────────────────────
-# pnpm keeps both under $PNPM_HOME, matching the path baked into
-# claude-guard/launchagents/com.turntrout.ccr.plist.
-#
-# Pin both to the versions in claude-guard/package.json — the canonical pin
-# that claude-guard's own setup.bash reads and tests/test_claude_code_version.py
+# ── claude-code ─────────────────────────────────────────────────────────────
+# Pin to the version in agent-glovebox/package.json — the canonical pin that
+# glovebox's own setup.bash reads and tests/test_claude_code_version.py
 # enforces, so the guardrails are validated against exactly this claude-code.
 # Installing unpinned "latest" here would drift the CLI ahead of that tested
 # version. Fall back to unpinned only when the pin can't be read (subrepo not
 # cloned yet, or jq missing) so a partial bootstrap still installs something.
 if command_exists pnpm; then
-    cc_pkg="$DOTFILES_DIR/claude-guard/package.json"
+    cc_pkg="$DOTFILES_DIR/agent-glovebox/package.json"
     if ! cc_spec="$(pnpm_pin_spec "$cc_pkg" "@anthropic-ai/claude-code")"; then
         status_msg "WARN: could not read claude-code pin from $cc_pkg — installing latest"
     fi
-    ccr_spec="$(pnpm_pin_spec "$cc_pkg" "@musistudio/claude-code-router")" || true
-    status_msg "Installing ${cc_spec} + ${ccr_spec} via pnpm..."
+    status_msg "Installing ${cc_spec} via pnpm..."
     # Retry transient registry/network failures. A final failure is a WARN,
     # not an abort — setup.bash must still reach its closing doctor.bash
-    # summary, which reports the missing claude/ccr commands.
-    retry 3 10 pnpm add --global --reporter=append-only "$cc_spec" "$ccr_spec" ||
-        status_msg "WARN: claude-code + ccr install failed after 3 attempts — rerun bin/setup_llm.bash."
+    # summary, which reports the missing claude command.
+    retry 3 10 pnpm add --global --reporter=append-only "$cc_spec" ||
+        status_msg "WARN: claude-code install failed after 3 attempts — rerun bin/setup_llm.bash."
 
     CLAUDE_INSTALLER="$(pnpm root -g)/@anthropic-ai/claude-code/install.cjs"
     if [[ -f "$CLAUDE_INSTALLER" ]] && command_exists node; then
@@ -62,7 +58,7 @@ if command_exists pnpm; then
         node "$CLAUDE_INSTALLER" || status_msg "WARN: claude-code native installer failed; continuing with pnpm-global claude"
     fi
 else
-    status_msg "WARN: pnpm not found — skipping claude-code + ccr install"
+    status_msg "WARN: pnpm not found — skipping claude-code install"
 fi
 
 # ── aider ───────────────────────────────────────────────────────────────────
@@ -101,14 +97,6 @@ if command_exists uv && ! command_exists wut; then
     retry 3 5 uv tool install --quiet "$WUT_PIN" ||
         status_msg "WARN: wut-cli install failed; rerun bin/setup_llm.bash."
 fi
-
-# ── Venice default_code resolver cache ──────────────────────────────────────
-# Refresh the cached model id that claude-private / claude-paranoid read
-# from. Falls back internally if the API is unreachable.
-# shellcheck source=../claude-guard/bin/lib/venice-resolve.bash disable=SC1091
-source "$DOTFILES_DIR/claude-guard/bin/lib/venice-resolve.bash"
-status_msg "Resolving Venice default_code model..."
-cache_venice_trait default_code "$VENICE_DEFAULT_CODE_FALLBACK"
 
 # ── llm CLI (ad-hoc shell prompts; unrelated to the commit-msg hook) ────────
 if command_exists uv && ! command_exists llm; then

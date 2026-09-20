@@ -64,7 +64,7 @@ safe_link() {
         # Stale symlink (or no target) — ln -sfn handles atomically.
         # -n (--no-dereference) is load-bearing: when $target_file is an
         # existing symlink that resolves to a *directory* (e.g. ~/.claude/
-        # commands, ~/.config/nvim, ~/.devcontainer), a plain `ln -sf`
+        # commands, ~/.config/nvim, ~/.claude/hooks), a plain `ln -sf`
         # dereferences it and drops the new link *inside* that directory,
         # leaving the symlink itself still pointing at the old target. -n
         # replaces the symlink atomically instead.

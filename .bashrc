@@ -19,9 +19,8 @@ elif [ -d /home/linuxbrew/.linuxbrew ]; then
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 fi
 
-# Prepend ~/.local/bin so the dotfiles `claude` shim wins over any brew/
-# pnpm-installed claude (the shim's whole job is to relaunch in the
-# devcontainer, which a brew-installed claude can't do).
+# Prepend ~/.local/bin so glovebox's wrappers win over any brew/pnpm-installed
+# claude.
 export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 
 # SSOT for vars also exported by apps/fish/config.fish — see

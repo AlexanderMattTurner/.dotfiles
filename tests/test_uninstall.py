@@ -11,9 +11,12 @@ Complements the full-roundtrip integration in test_uninstall_roundtrip.py with:
 """
 
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO = Path(
     subprocess.check_output(
@@ -170,6 +173,10 @@ def test_repo_hook_symlinks_are_never_touched(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.skipif(
+    platform.system() == "Darwin",
+    reason="the Linux leg needs a real non-Darwin uname; CI's ubuntu job runs it",
+)
 def test_macos_block_is_gated_on_is_mac(tmp_path: Path) -> None:
     dot = _fake_dotfiles(tmp_path)
     home = tmp_path / "home"
@@ -178,16 +185,16 @@ def test_macos_block_is_gated_on_is_mac(tmp_path: Path) -> None:
     bindir = tmp_path / "bin"
     bindir.mkdir()
 
-    # A ccr launch-agent symlink pointing into the repo.
-    ccr = la / "com.turntrout.ccr.plist"
-    ccr.symlink_to(dot / "claude-guard" / "launchagents" / "com.turntrout.ccr.plist")
+    # A Duplicati launch-agent symlink pointing into the repo.
+    plist = la / "com.duplicati.server.plist"
+    plist.symlink_to(dot / "launchagents" / "com.duplicati.server.plist")
 
     # Linux leg (real uname): the macOS block is skipped, so the plist survives.
     out_linux = _run_uninstall(dot, home, bindir, darwin=False)
-    assert ccr.is_symlink(), "macOS block must not run on Linux"
-    assert "ccr launch agent" not in out_linux
+    assert plist.is_symlink(), "macOS block must not run on Linux"
+    assert "Duplicati" not in out_linux
 
-    # Darwin leg (faked uname): the block runs and removes the ccr symlink.
+    # Darwin leg (faked uname): the block runs and removes the plist symlink.
     out_mac = _run_uninstall(dot, home, bindir, darwin=True)
-    assert not ccr.is_symlink(), "macOS block should remove the ccr symlink"
+    assert not plist.is_symlink(), "macOS block should remove the Duplicati symlink"
     assert "removed" in out_mac

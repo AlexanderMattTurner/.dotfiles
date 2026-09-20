@@ -9,9 +9,9 @@ version: 2
 #     dependabot-auto-merge.yaml) keep it current.
 #
 # The github-actions ecosystem is scoped to that action via `allow` so this
-# config stays focused on Claude Code updates. Docker isn't tracked:
-# .devcontainer/ is a symlink into the gitignored claude-guard/ subrepo, which
-# Dependabot can't resolve ("no Dockerfiles found").
+# config stays focused on Claude Code updates. Docker isn't tracked: this repo
+# ships no Dockerfile, and the sandbox images live in the gitignored
+# agent-glovebox/ subrepo, which Dependabot can't resolve.
 updates:
   - package-ecosystem: github-actions
     directory: "/"

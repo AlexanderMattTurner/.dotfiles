@@ -59,24 +59,6 @@ remove_dotfile_symlink "$HOME/.config/fish/functions/fish_prompt.fish" \
     "$DOTFILES_DIR/apps/fish/functions/fish_prompt.fish"
 
 if $IS_MAC; then
-    # Unload + remove the ccr launch agent. launchctl unload is safe on a
-    # missing label; we still prompt because it touches a running service.
-    CCR_PLIST="$HOME/Library/LaunchAgents/com.turntrout.ccr.plist"
-    if [[ -L "$CCR_PLIST" ]]; then
-        if $ASSUME_YES; then
-            choice=y
-        else
-            read -rp "Unload + remove ccr launch agent? (y/N) " choice
-        fi
-        case "$choice" in
-        y | Y)
-            launchctl bootout "gui/$(id -u)" "$CCR_PLIST" 2>/dev/null || true
-            remove_dotfile_symlink "$CCR_PLIST" "$DOTFILES_DIR/claude-guard/launchagents/com.turntrout.ccr.plist"
-            ;;
-        *) echo "  skip ccr launch agent" ;;
-        esac
-    fi
-
     # Rendered real file (see setup.bash) — remove with rm.
     TS_EXIT_PLIST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
     if [[ -f "$TS_EXIT_PLIST" ]]; then
