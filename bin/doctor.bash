@@ -454,26 +454,34 @@ esac
 section "Disk space"
 
 # The remedies are spelled out rather than hidden behind a wrapper: each is the
-# tool's own prune, so it stays correct as those tools change. Only the lima
-# line is destructive, which is why it names `limactl list` first — a raw VM
-# image never gives freed guest blocks back, so deleting the instance is the
-# only way to reclaim it, and that is a decision, not a cleanup.
+# tool's own prune, so they stay correct as those tools change. The lima line
+# names `limactl list` instead of a command because a VM image holds live
+# content, not garbage — deleting an instance is a decision, not a cleanup.
+#
+# Continuation lines carry their own 7-space indent: fail() indents only the
+# first line of its detail argument, so without this the block lands flush-left
+# against the report's detail column.
 _disk_remedies() {
     printf '%s\n' \
-        "reclaim: brew cleanup --prune=all; pnpm store prune; uv cache prune;" \
-        "         pre-commit gc; limactl prune; glovebox gc" \
-        "VM images never shrink — review with: limactl list"
+        "       reclaim: brew cleanup --prune=all; pnpm store prune;" \
+        "                uv cache prune; pre-commit gc; limactl prune; glovebox gc" \
+        "       review VM images (not prunable) with: limactl list"
+}
+
+# Sized only on the unhealthy branches: `du` walks every lima instance, which is
+# wasted work on the overwhelmingly common ok path. Suppressed under a whole
+# GiB — a rounded-to-zero figure is noise, not a lead.
+_disk_lima_note() {
+    local kib gib
+    kib="$(disk_lima_image_kib)"
+    [[ -n "$kib" ]] || return 0
+    gib="$(disk_kib_to_gib "$kib")"
+    [[ "$gib" -ge 1 ]] || return 0
+    printf ' — lima VM images hold %sGiB' "$gib"
 }
 
 DISK_STATE="$(disk_space_health)"
 DISK_FREE="${DISK_STATE#*:}"
-# Suppressed under a whole GiB: a rounded-to-zero figure is noise, not a lead.
-DISK_LIMA="$(disk_lima_image_kib)"
-if [[ -n "$DISK_LIMA" ]] && ((DISK_LIMA / 1048576 >= 1)); then
-    DISK_LIMA=" — lima VM images hold $((DISK_LIMA / 1048576))GiB"
-else
-    DISK_LIMA=""
-fi
 
 case "$DISK_STATE" in
 ok:*)
@@ -481,11 +489,11 @@ ok:*)
     ;;
 low:*)
     fail "free space" "$(printf '%sGiB free, under %sGiB%s\n%s' \
-        "$DISK_FREE" "$DISK_LOW_GIB" "$DISK_LIMA" "$(_disk_remedies)")"
+        "$DISK_FREE" "$DISK_LOW_GIB" "$(_disk_lima_note)" "$(_disk_remedies)")"
     ;;
 critical:*)
     fail "free space" "$(printf '%sGiB free, under %sGiB — writes will start failing%s\n%s' \
-        "$DISK_FREE" "$DISK_CRITICAL_GIB" "$DISK_LIMA" "$(_disk_remedies)")"
+        "$DISK_FREE" "$DISK_CRITICAL_GIB" "$(_disk_lima_note)" "$(_disk_remedies)")"
     ;;
 unknown)
     skip "free space" "df unavailable or unparseable"

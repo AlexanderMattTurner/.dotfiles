@@ -324,6 +324,68 @@ Code's permission prompts (no `--dangerously-skip-permissions`).
   a frozen list). The `mods` fish function wraps invocations in
   `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the Keychain.
 
+### Disk space
+
+This machine reached 98% full (11GiB free of 460GiB) with nothing flagging
+it. Two different things eat the disk, and they need opposite responses:
+
+- **Package-manager stores** (pnpm, uv, Homebrew downloads, pre-commit)
+  keep every version forever until explicitly pruned — pnpm's store alone
+  held 7.4GiB, of which 5.3GiB was unreferenced. This *is* garbage. Each
+  has its own prune (`pnpm store prune`, `uv cache prune`, `brew cleanup
+  --prune=all`, `pre-commit gc`, `limactl prune`, `glovebox gc`); doctor
+  names them rather than wrapping them, so they stay correct as those
+  tools change.
+- **glovebox's lima kata VMs** are the bigger number (five `gb-kata*`
+  instances reached 66GiB between them) but they are **not** garbage, and
+  doctor must not offer to prune them.
+
+**Do not "fix" the VM images by adding TRIM — discard is already plumbed
+end to end, and verified.** The chain is `container → devmapper thin pool
+(discard_passdown) → data.img (sparse) → ext4 / (mounted discard) → vda
+raw image (sparse) → APFS`; containerd sets `discard_blocks = true` and
+`dmsetup status` reports `discard_passdown`. Measured on a live instance:
+**10.12GiB allocated on the host against 9.8GiB used in-guest**, with
+`fstrim` finding **0B** left to return, because online discard had already
+done it. Freed guest blocks come back on their own.
+
+Every layer is likewise provisioned generously and allocated sparsely, so
+a configured size is a ceiling and never a cost — the 40GiB `disk:` in
+`lima.yaml` was 10.12GiB on disk, and the 20GiB `data.img` was 2.2GiB.
+**Never read a provisioned size as consumption.** A VM's footprint is real,
+live content: an Ubuntu base (~3.2GiB), Kata Containers shipping its own
+guest kernel and rootfs (~2GiB), containerd plus its thin pool (~3GiB),
+and the signing/proxy tooling (~320MiB) — roughly 9GiB is the floor for a
+nested-virt sandbox, and the rest is images someone actually pulled.
+
+So there is nothing for a prune to reclaim; `limactl delete` is the only
+lever, which makes it a decision rather than a cleanup. Doctor reports the
+number and points at `limactl list` instead of suggesting a command.
+
+`disk_space_health` in `bin/lib/disk-space.sh` is the single classifier
+(`ok:<gib>` / `low:<gib>` / `critical:<gib>` / `unknown`). It measures
+**absolute free GiB, not percent used**: percent is a ratio to total
+capacity, but what actually breaks a build or a VM boot is headroom. It
+answers `unknown` — never `ok` — when `df` is missing or its columns don't
+parse, for the same reason `tmux_snapshot_health` only under-reports: this
+check exists to catch a disk that filled up, and must not invent headroom
+it did not measure. Thresholds are 25/10GiB rather than a kata VM's 40GiB
+provisioned ceiling, because this machine runs near 88% full and works
+fine — a doctor that is red when nothing is wrong trains you to stop
+reading it.
+
+`disk_lima_image_kib` reports KiB rather than GiB so its tests need
+fixtures of kilobytes, not gigabytes; `bin/doctor.bash` owns the rounding
+and suppresses a figure under 1GiB as noise. It is called only from the
+unhealthy branches, because `du`-ing every instance is wasted work on the
+common `ok` path.
+
+Adding a failure mode = new state there + an arm in `bin/doctor.bash`'s
+case + a case in `tests/test_disk_space.py`. That last one drives the real
+`doctor.bash` rather than grepping its source, because a grep still passes
+after a state is renamed while doctor silently falls through to its
+unhandled arm.
+
 ### Backups
 
 Duplicati is the only offsite copy of this machine, and it is the one
