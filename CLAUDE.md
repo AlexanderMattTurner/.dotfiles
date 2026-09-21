@@ -247,9 +247,8 @@ it. Two different things eat the disk, and they need opposite responses:
   names them rather than wrapping them, so they stay correct as those
   tools change.
 - **glovebox's lima kata VMs** are the bigger number (five `gb-kata*`
-  instances reached 66GiB between them; one hit 33GiB while in `Broken`
-  state — stale sockets from a launch that died, not a running VM) but
-  they are **not** garbage, and doctor must not offer to prune them.
+  instances reached 66GiB between them) but they are **not** garbage, and
+  doctor must not offer to prune them.
 
 **Do not "fix" the VM images by adding TRIM — discard is already plumbed
 end to end, and verified.** The chain is `container → devmapper thin pool
@@ -280,14 +279,34 @@ capacity, but what actually breaks a build or a VM boot is headroom. It
 answers `unknown` — never `ok` — when `df` is missing or its columns don't
 parse, for the same reason `tmux_snapshot_health` only under-reports: this
 check exists to catch a disk that filled up, and must not invent headroom
-it did not measure. `disk_lima_image_kib` reports KiB rather than GiB so
-its tests need fixtures of kilobytes, not gigabytes; `bin/doctor.bash`
-owns the rounding and suppresses a figure under 1GiB as noise.
+it did not measure. Thresholds are 25/10GiB rather than a kata VM's 40GiB
+provisioned ceiling, because this machine runs near 88% full and works
+fine — a doctor that is red when nothing is wrong trains you to stop
+reading it.
 
-Adding a failure mode = new state there + an arm in `bin/doctor.bash`'s
-case + a case in `tests/test_disk_space.py` (which asserts doctor has an
-arm for every state, so skipping the second half fails the suite instead
-of surfacing `unhandled state` at runtime).
+`unknown` is a SKIP rather than a FAIL: doctor prints SKIP even in its
+default non-verbose mode, so an unmeasurable disk is still surfaced, but a
+check that never ran is not the same claim as a check that failed.
+
+Classifying and reporting are deliberately separate files. The classifier
+is `bin/lib/disk-space.sh`; the reporter is `disk_space_check` (with
+`_disk_lima_note` and `_disk_remedies`) in `bin/lib/doctor-checks.sh`, and
+`bin/doctor.bash` only calls it. That split is what `doctor-checks.sh`
+already exists for — so doctor's assertions have direct unit tests instead
+of only being exercised through a full integration run. It costs one
+coupling: `doctor-checks.sh` needs `disk-space.sh` sourced alongside it.
+
+`disk_lima_image_kib` reports KiB rather than GiB so its tests need
+fixtures of kilobytes, not gigabytes; `_disk_lima_note` owns the rounding
+and suppresses a figure under 1GiB as noise. It is called only from the
+unhealthy branches, because `du`-ing every instance is wasted work on the
+common `ok` path.
+
+Adding a failure mode = new state in `disk_space_health` + an arm in
+`disk_space_check`'s case + a case in `tests/test_disk_space.py`. That last
+one executes the real reporter with stub `pass`/`fail`/`skip` recorders
+rather than grepping source, because a grep still passes after a state is
+renamed while the reporter silently falls through to its catch-all arm.
 
 ### Backups
 
