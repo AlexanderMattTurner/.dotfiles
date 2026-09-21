@@ -5,6 +5,12 @@
 # This catches hooks that break end-to-end (a syntax error, a missing tool, a
 # formatter that errors on the repo's own files) before they reach a session
 # and silently block every tool call. Run by `.github/workflows/hook-lifecycle.yaml`.
+#
+# Local divergence from the template: legs 1 and 3 are skipped when their script
+# is absent. `.claude/hooks` here is a symlink into the .gitignore'd
+# claude-guard/ checkout, so it dangles in every CI checkout and this repo
+# registers no Claude Code hooks at all. Legs 2 and 4 are real here and still
+# run. Drop the guards if this repo ever owns its own .claude/hooks/.
 
 set -euo pipefail
 
@@ -24,18 +30,22 @@ export CLAUDE_ENV_FILE
 setup_log=$(mktemp "${RUNNER_TEMP:-/tmp}/session-setup_XXXXXX.log")
 trap 'rm -f "$CLAUDE_ENV_FILE" "$setup_log"' EXIT
 
-echo "::group::session-setup.sh"
-.claude/hooks/session-setup.sh 2>&1 | tee "$setup_log"
-echo "::endgroup::"
-# shellcheck disable=SC1090
-source "$CLAUDE_ENV_FILE"
+if [ -x .claude/hooks/session-setup.sh ]; then
+  echo "::group::session-setup.sh"
+  .claude/hooks/session-setup.sh 2>&1 | tee "$setup_log"
+  echo "::endgroup::"
+  # shellcheck disable=SC1090
+  source "$CLAUDE_ENV_FILE"
 
-# session-setup warns (exit 0) instead of failing so a real session can still
-# start, but a hook with a syntax error is exactly the regression this job
-# exists to catch — so promote that specific warning to a hard failure.
-if grep -q "syntax error" "$setup_log"; then
-  echo "session-setup reported a hook with a syntax error — see log above" >&2
-  exit 1
+  # session-setup warns (exit 0) instead of failing so a real session can still
+  # start, but a hook with a syntax error is exactly the regression this job
+  # exists to catch — so promote that specific warning to a hard failure.
+  if grep -q "syntax error" "$setup_log"; then
+    echo "session-setup reported a hook with a syntax error — see log above" >&2
+    exit 1
+  fi
+else
+  echo "skipping session-setup.sh: .claude/hooks/session-setup.sh is absent"
 fi
 
 # 2. Pre-commit hook. Stage any pending changes and run it. lint-staged only ever
@@ -49,9 +59,13 @@ echo "::endgroup::"
 
 # 3. Pre-push checks (build/lint/test/ruff — whichever are configured).
 export CLAUDE_PROJECT_DIR="$repo_root"
-echo "::group::pre-push-check.sh"
-.claude/hooks/pre-push-check.sh
-echo "::endgroup::"
+if [ -x .claude/hooks/pre-push-check.sh ]; then
+  echo "::group::pre-push-check.sh"
+  .claude/hooks/pre-push-check.sh
+  echo "::endgroup::"
+else
+  echo "skipping pre-push-check.sh: .claude/hooks/pre-push-check.sh is absent"
+fi
 
 # 4. Git pre-push hook. Feed it an empty ref list (a push with nothing to push)
 #    so the pushed-range pre-commit loop is a no-op and the leg verifies the

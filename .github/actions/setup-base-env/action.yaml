@@ -2,8 +2,9 @@ name: "Setup Base Environment"
 description: "Sets up Node.js with pnpm and caching when the repo has a package.json. Optionally sets up Python with uv."
 # Vendored from alexander-turner/claude-automation-template at dc94850 because
 # template-sync.yaml's SYNC_PATHS doesn't cover .github/actions/. Local change
-# vs upstream: every node/pnpm step is gated on hashFiles('package.json') so
-# this composite is a no-op in non-Node repos (this dotfiles repo). When
+# vs upstream: every node/pnpm step is gated on hashFiles('package.json'), and
+# `uv sync` on hashFiles('pyproject.toml'), so this composite is a no-op in
+# repos that carry neither manifest (this dotfiles repo carries neither). When
 # upstream lands an equivalent guard, re-vendor and drop the divergence.
 inputs:
   node-version:
@@ -78,6 +79,9 @@ runs:
       shell: bash
 
     - name: Install Python Dependencies
-      if: inputs.setup-python == 'true'
+      # `uv sync` exits 2 with "No `pyproject.toml` found" in a repo that has
+      # none, which is every caller in this repo. Mirrors the package.json gate
+      # above: uv and the interpreter still install, only the sync is skipped.
+      if: inputs.setup-python == 'true' && hashFiles('pyproject.toml') != ''
       run: uv sync --frozen
       shell: bash

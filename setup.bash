@@ -70,6 +70,32 @@ done < <(repo_hook_symlinks)
 # prompt — which can't run on the --link-only path.
 bash "$DOTFILES_DIR/bin/lib/stale-symlinks.sh" --prune
 
+# Retired artifacts of the Tailscale exit-node stack (egress is the Mullvad
+# app now; clearing a Tailscale exit node deletes the default route, see
+# CLAUDE.md "VPN"). Both lived only on machines set up before that change,
+# and neither is reachable by the generic reconcile above: the SwiftBar link
+# was the sole managed entry under ~/.config/swiftbar, so the stale-symlink
+# scan no longer visits that directory; and the login agent is a rendered
+# file, not a symlink. Runs before the --link-only return because that is
+# the documented update path for an existing Mac. No-op once both are gone.
+if [ "$(uname)" = "Darwin" ]; then
+    RETIRED_SWIFTBAR_LINK="$HOME/.config/swiftbar/vpn.10s.bash"
+    if [ -L "$RETIRED_SWIFTBAR_LINK" ] &&
+        [[ "$(readlink "$RETIRED_SWIFTBAR_LINK")" == "$DOTFILES_DIR"/* ]]; then
+        status_msg "Removing retired SwiftBar vpn plugin link"
+        rm -f "$RETIRED_SWIFTBAR_LINK"
+    fi
+    # -e || -L: older setups symlinked the plist, and once its source is
+    # deleted that link dangles, which a plain -f test would miss.
+    TS_EXIT_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
+    if [ -e "$TS_EXIT_PLIST_DEST" ] || [ -L "$TS_EXIT_PLIST_DEST" ]; then
+        status_msg "Removing retired tailscale-exit-node launch agent"
+        launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
+        rm -f "$TS_EXIT_PLIST_DEST"
+    fi
+    rm -rf "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
+fi
+
 [[ -f "$HOME/.extras.bash" ]] || touch "$HOME/.extras.bash"
 [[ -f "$HOME/.extras.fish" ]] || touch "$HOME/.extras.fish"
 [[ -f "$HOME/.hushlogin" ]] || touch "$HOME/.hushlogin"
@@ -275,9 +301,8 @@ if [ "$(uname)" = "Darwin" ]; then
     unset needs_bootstrap
 
     # `brew upgrade tailscale` swaps the CLI binary but leaves the old
-    # tailscaled running under launchd. A skewed pair mishandles exit-node
-    # teardown — disconnecting blackholes all traffic. Kickstart the daemon
-    # so it respawns on the current binary. Idempotent: no-op when matched.
+    # tailscaled running under launchd. Kickstart the daemon so it respawns
+    # on the current binary. Idempotent: no-op when matched.
     # shellcheck source=bin/lib/tailscale-resolve.sh disable=SC1091
     source "$DOTFILES_DIR/bin/lib/tailscale-resolve.sh"
     if ts_bin="$(find_tailscale)"; then
@@ -289,24 +314,14 @@ if [ "$(uname)" = "Darwin" ]; then
     fi
     unset ts_bin skew_msg skew_rc
 
-    # Tailscale exit-node applier: reasserts the configured Mullvad exit node
-    # at login, retrying while tailscaled finishes its handshake.
-    # The plist bakes in absolute /Users/$USER paths, so render it from the
-    # __USERNAME__ template — same convention as tailscaled/sudoers above.
-    TS_EXIT_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
-    mkdir -p "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
-    TS_EXIT_PLIST_RENDERED="$(mktemp)"
-    trap 'rm -f "$TS_EXIT_PLIST_RENDERED"' EXIT
-    sed "s/__USERNAME__/$ESCAPED_USER/g" \
-        "$DOTFILES_DIR/launchagents/com.turntrout.tailscale-exit-node.plist.template" \
-        >"$TS_EXIT_PLIST_RENDERED"
-    if [ ! -f "$TS_EXIT_PLIST_DEST" ] || ! cmp -s "$TS_EXIT_PLIST_RENDERED" "$TS_EXIT_PLIST_DEST"; then
-        install -m 0644 "$TS_EXIT_PLIST_RENDERED" "$TS_EXIT_PLIST_DEST"
-    fi
-    rm -f "$TS_EXIT_PLIST_RENDERED"
-    trap - EXIT
-    launchctl bootout "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$TS_EXIT_PLIST_DEST" 2>/dev/null || true
+    # No Claude or Tailscale login agent is installed here, by design:
+    #   - the ccr agent belonged to the retired claude-guard checkout; ccr and
+    #     its wrappers are gone, and glovebox supervises its own processes;
+    #   - the tailscale-exit-node applier is retired upstream — egress is the
+    #     Mullvad app now, its plist template is deleted, and the eviction
+    #     block near the top of this script actively removes any leftover.
+    # Installing either here would fight that eviction on every run.
+    mkdir -p "$HOME/Library/LaunchAgents"
 
     # Duplicati: the daily offsite backup. Its LaunchAgent is tracked here
     # rather than living only in ~/Library/LaunchAgents so a rebuilt machine
