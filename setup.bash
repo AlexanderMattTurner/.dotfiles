@@ -49,17 +49,6 @@ source "$DOTFILES_DIR/bin/lib/symlinks.sh"
 # shellcheck source=bin/lib/retry.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/retry.sh"
 
-# ── claude-guard (always run) ────────────────────────────────
-# Clones/updates at the commit pinned in claude-guard.ref — the subrepo
-# carries the AI-safety monitor, so it doesn't float at origin/main.
-# Bump with: bash bin/clone-claude-guard.bash --bump
-# Non-fatal: a fresh machine with a flaky network shouldn't be unable to
-# reach the closing doctor.bash summary. doctor.bash's claude-guard check
-# reports the state below (skips if never cloned, fails if drifted from the
-# pin) with the exact remediation command.
-bash "$DOTFILES_DIR/bin/clone-claude-guard.bash" ||
-    status_msg "WARN: claude-guard clone/update failed; rerun 'bash bin/clone-claude-guard.bash' — doctor.bash reports its state below."
-
 # ── Symlinks (always run) ────────────────────────────────────────────────────
 status_msg "Linking dotfiles..."
 # Iterate both shared lists. safe_link handles all clobber/backup semantics —
@@ -325,14 +314,14 @@ if [ "$(uname)" = "Darwin" ]; then
     fi
     unset ts_bin skew_msg skew_rc
 
-    # claude-code-router (ccr): backs claude-{fast,private,think} wrappers.
-    # Supervised by launchd so it's running before any wrapper invocation
-    # and respawned if it crashes.
-    CCR_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.ccr.plist"
-    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/com.turntrout.ccr"
-    safe_link "$DOTFILES_DIR/claude-guard/launchagents/com.turntrout.ccr.plist" "$CCR_PLIST_DEST"
-    launchctl bootout "gui/$(id -u)" "$CCR_PLIST_DEST" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$CCR_PLIST_DEST" 2>/dev/null || true
+    # No Claude or Tailscale login agent is installed here, by design:
+    #   - the ccr agent belonged to the retired claude-guard checkout; ccr and
+    #     its wrappers are gone, and glovebox supervises its own processes;
+    #   - the tailscale-exit-node applier is retired upstream — egress is the
+    #     Mullvad app now, its plist template is deleted, and the eviction
+    #     block near the top of this script actively removes any leftover.
+    # Installing either here would fight that eviction on every run.
+    mkdir -p "$HOME/Library/LaunchAgents"
 
     # Duplicati: the daily offsite backup. Its LaunchAgent is tracked here
     # rather than living only in ~/Library/LaunchAgents so a rebuilt machine
@@ -341,8 +330,7 @@ if [ "$(uname)" = "Darwin" ]; then
     # "are we backing up?" could only be answered by opening the web UI.
     #
     # Guarded on the app being present: KeepAlive would otherwise respawn a
-    # missing binary in a tight loop, the same trap bin/setup_llm.bash exists
-    # to keep the ccr agent out of.
+    # missing binary in a tight loop.
     DUPLICATI_PLIST_DEST="$HOME/Library/LaunchAgents/com.duplicati.server.plist"
     if [ -d "/Applications/Duplicati.app" ]; then
         # launchd refuses to start an agent whose StandardOutPath directory
@@ -353,10 +341,9 @@ if [ "$(uname)" = "Darwin" ]; then
         mkdir -p /Users/Shared/Duplicati/log ||
             status_msg "WARN: could not create /Users/Shared/Duplicati/log — Duplicati agent may not start"
         safe_link "$DOTFILES_DIR/launchagents/com.duplicati.server.plist" "$DUPLICATI_PLIST_DEST"
-        # Bootstrap only when it isn't already loaded. Unlike the ccr agent,
-        # a bootout/bootstrap cycle here would abort a backup that happens to
-        # be mid-flight, and re-running setup.bash must never cost a day of
-        # backup coverage.
+        # Bootstrap only when it isn't already loaded: a bootout/bootstrap
+        # cycle here would abort a backup that happens to be mid-flight, and
+        # re-running setup.bash must never cost a day of backup coverage.
         if ! launchctl print "gui/$(id -u)/com.duplicati.server" >/dev/null 2>&1; then
             launchctl bootstrap "gui/$(id -u)" "$DUPLICATI_PLIST_DEST" 2>/dev/null || true
         fi
@@ -546,18 +533,7 @@ if command_exists mise; then
     unset mise_err
 fi
 
-# devcontainer CLI — used by the host-side `claude` wrappers
-# (claude-guard/bin/claude and apps/fish/functions/claude.fish)
-# to bring up .devcontainer/ on demand.
-# pnpm is configured above (PNPM_HOME + PATH), so this lands alongside the
-# other globals (claude-code, ccr, prettier, @bitwarden/cli).
-if command_exists pnpm; then
-    retry 3 5 pnpm add --global @devcontainers/cli >/dev/null 2>&1 ||
-        status_msg "WARN: 'pnpm add -g @devcontainers/cli' failed. The claude wrapper will fall back to running on the host."
-fi
-
-# AI tooling: claude-code + ccr, aider, VSCodium + Roo, wut, llm
-# commit-msg hook, Venice default_code resolver cache.
+# AI tooling: claude-code, aider, VSCodium + Roo, wut, llm commit-msg hook.
 bash "$DOTFILES_DIR/bin/setup_llm.bash"
 
 if [ "$(uname)" != "Darwin" ] && ! command_exists xmllint; then

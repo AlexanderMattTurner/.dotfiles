@@ -42,12 +42,12 @@ IS_MAC=false
 
 # shellcheck source=lib/symlinks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/symlinks.sh"
-# shellcheck source=lib/claude-guard-pin.sh disable=SC1091
-source "$DOTFILES_DIR/bin/lib/claude-guard-pin.sh"
 # check_symlink / check_command live in a lib so they can be unit-tested; they
 # call the pass/fail reporters defined below and bump MANAGED_LINK_FAIL.
 # shellcheck source=lib/doctor-checks.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/doctor-checks.sh"
+# shellcheck source=lib/disk-space.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/disk-space.sh"
 
 if [[ -t 1 ]]; then
     GREEN='\033[0;32m'
@@ -118,28 +118,30 @@ if [[ $stale_count -eq 0 ]]; then
     pass "no stale dotfiles symlinks"
 fi
 
-# ── claude-guard pin ────────────────────────────────────────────────────────
-section "claude-guard"
+# ── glovebox ────────────────────────────────────────────────────────────────
+# The sandboxed Claude session. The checkout is user-managed (glovebox owns
+# its own updates), so this repo only asserts that it is there and reachable —
+# it pins no ref.
+section "glovebox"
 
-CG_DIR="$DOTFILES_DIR/claude-guard"
-CG_REF_FILE="$DOTFILES_DIR/claude-guard.ref"
-case "$(claude_guard_pin_status "$CG_DIR" "$CG_REF_FILE")" in
-not-cloned)
-    skip "claude-guard checkout" "not cloned (run setup.bash or bin/clone-claude-guard.bash)"
-    ;;
-missing-ref)
-    fail "claude-guard pin" "claude-guard.ref missing from the repo"
-    ;;
-pinned)
-    cg_pinned="$(<"$CG_REF_FILE")"
-    pass "claude-guard at pinned ref (${cg_pinned:0:7})"
-    ;;
-drifted)
-    cg_pinned="$(<"$CG_REF_FILE")"
-    cg_head="$(git -C "$CG_DIR" rev-parse HEAD 2>/dev/null)"
-    fail "claude-guard pin" "HEAD ${cg_head:0:7} != pinned ${cg_pinned:0:7} — run bin/clone-claude-guard.bash (or --bump to move the pin)"
-    ;;
-esac
+GB_DIR="$DOTFILES_DIR/agent-glovebox"
+GB_BIN="$GB_DIR/bin/glovebox"
+if [[ ! -d "$GB_DIR/.git" ]]; then
+    skip "glovebox checkout" "$GB_DIR not present (git clone https://github.com/AlexanderMattTurner/agent-glovebox, then bash agent-glovebox/setup.bash)"
+elif [[ ! -x "$GB_BIN" ]]; then
+    fail "glovebox wrapper" "$GB_BIN missing or not executable"
+else
+    pass "glovebox checkout"
+    gb_on_path="$(command -v glovebox 2>/dev/null || true)"
+    if [[ -z "$gb_on_path" ]]; then
+        fail "glovebox on PATH" "run: bash $GB_DIR/setup.bash (installs ~/.local/bin/glovebox)"
+    elif [[ "$(readlink "$gb_on_path" || echo "$gb_on_path")" != "$GB_BIN" ]]; then
+        fail "glovebox on PATH" "$gb_on_path does not resolve to $GB_BIN"
+    else
+        pass "glovebox on PATH"
+    fi
+    unset gb_on_path
+fi
 
 # ── Required commands ───────────────────────────────────────────────────────
 section "Required commands"
@@ -186,17 +188,15 @@ done
 # shared installer. All skip-on-missing — doctor.bash must stay safe to run on
 # a partially-bootstrapped machine. Plain case (not declare -A) because macOS
 # /bin/bash is 3.2 and predates associative arrays.
-for cmd in pnpm ccr aider llm wut devcontainer; do
+for cmd in pnpm aider llm wut; do
     if command -v "$cmd" >/dev/null 2>&1; then
         pass "$cmd"
     else
         case "$cmd" in
         pnpm) hint="run: brew install pnpm (or bash setup.bash)" ;;
-        ccr) hint="run: pnpm add -g @musistudio/claude-code-router (or bash bin/setup_llm.bash)" ;;
         aider) hint="run: uv tool install aider-chat (or bash bin/setup_llm.bash)" ;;
         llm) hint="run: uv tool install llm (or bash bin/setup_llm.bash)" ;;
         wut) hint="run: uv tool install wut-cli (or bash bin/setup_llm.bash)" ;;
-        devcontainer) hint="run: pnpm add -g @devcontainers/cli (or bash setup.bash) — required by claude-guard/bin/claude sandbox wrapper" ;;
         esac
         skip "$cmd" "$hint"
     fi
@@ -296,39 +296,6 @@ if command -v envchain >/dev/null 2>&1; then
     pass "envchain installed"
 else
     skip "envchain" "not installed"
-fi
-
-# Mid-session rotation is the loopback proxy (bin/claude-rotate-proxy.py) the claude
-# fish wrapper points ANTHROPIC_BASE_URL at. The old apiKeyHelper wiring is gone; a
-# settings.json that still carries it points at a --helper mode that no longer
-# exists and would break every session, so flag that drift.
-claude_settings="$HOME/.claude/settings.json"
-if ! command -v jq >/dev/null 2>&1; then
-    skip "rotation settings" "jq not installed"
-elif [[ ! -f "$claude_settings" ]]; then
-    skip "rotation settings" "\$HOME/.claude/settings.json missing (run setup.bash)"
-elif [[ -n "$(jq -re '.apiKeyHelper // ""' "$claude_settings" 2>/dev/null)" ]]; then
-    fail "rotation settings" "settings.json still sets apiKeyHelper — mid-session rotation is now the loopback proxy; re-run setup.bash to refresh the symlink"
-else
-    pass "settings.json has no stale apiKeyHelper"
-fi
-
-# The rotation proxy and the selection engine it drives. The dry run gates
-# CLAUDE_ACCOUNT_NO_CONVERGE so a health check never re-points live sandboxes; it
-# may still spend the cache-gated probe any --pick does.
-proxy="$DOTFILES_DIR/bin/claude-rotate-proxy.py"
-if ! command -v python3 >/dev/null 2>&1; then
-    skip "rotation proxy" "python3 not installed"
-elif ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$proxy" 2>/dev/null; then
-    fail "rotation proxy" "$proxy does not parse"
-elif ! command -v envchain >/dev/null 2>&1; then
-    skip "rotation proxy" "envchain not installed"
-elif [[ -z "$("$DOTFILES_DIR/bin/claude-account.bash" --namespaces 2>/dev/null)" ]]; then
-    skip "rotation proxy" "no subscription account seeded (claude setup-token; envchain --set <ns> CLAUDE_CODE_OAUTH_TOKEN)"
-elif CLAUDE_ACCOUNT_NO_CONVERGE=1 "$DOTFILES_DIR/bin/claude-account.bash" --pick >/dev/null 2>&1; then
-    pass "rotation proxy + claude-account --pick serve an account"
-else
-    skip "rotation proxy" "every seeded account is at its usage limit right now (transient)"
 fi
 
 # A locked vault makes `bw list folders` block forever, so a wedged autosync
@@ -448,6 +415,51 @@ no-tmux)
     ;;
 esac
 
+# ── Disk space ──────────────────────────────────────────────────────────────
+section "Disk space"
+
+# The remedies are spelled out rather than hidden behind a wrapper: each is the
+# tool's own prune, so it stays correct as those tools change. Only the lima
+# line is destructive, which is why it names `limactl list` first — a raw VM
+# image never gives freed guest blocks back, so deleting the instance is the
+# only way to reclaim it, and that is a decision, not a cleanup.
+_disk_remedies() {
+    printf '%s\n' \
+        "reclaim: brew cleanup --prune=all; pnpm store prune; uv cache prune;" \
+        "         pre-commit gc; limactl prune; glovebox gc" \
+        "VM images never shrink — review with: limactl list"
+}
+
+DISK_STATE="$(disk_space_health)"
+DISK_FREE="${DISK_STATE#*:}"
+# Suppressed under a whole GiB: a rounded-to-zero figure is noise, not a lead.
+DISK_LIMA="$(disk_lima_image_kib)"
+if [[ -n "$DISK_LIMA" ]] && ((DISK_LIMA / 1048576 >= 1)); then
+    DISK_LIMA=" — lima VM images hold $((DISK_LIMA / 1048576))GiB"
+else
+    DISK_LIMA=""
+fi
+
+case "$DISK_STATE" in
+ok:*)
+    pass "free space (${DISK_FREE}GiB)"
+    ;;
+low:*)
+    fail "free space" "$(printf '%sGiB free, under %sGiB%s\n%s' \
+        "$DISK_FREE" "$DISK_LOW_GIB" "$DISK_LIMA" "$(_disk_remedies)")"
+    ;;
+critical:*)
+    fail "free space" "$(printf '%sGiB free, under %sGiB — writes will start failing%s\n%s' \
+        "$DISK_FREE" "$DISK_CRITICAL_GIB" "$DISK_LIMA" "$(_disk_remedies)")"
+    ;;
+unknown)
+    skip "free space" "df unavailable or unparseable"
+    ;;
+*)
+    fail "free space" "unhandled disk_space_health state: $DISK_STATE"
+    ;;
+esac
+
 # ── cron jobs ───────────────────────────────────────────────────────────────
 section "cron"
 
@@ -465,21 +477,6 @@ fi
 # ── macOS launchd agents ────────────────────────────────────────────────────
 if $IS_MAC; then
     section "launchd agents"
-    CCR_PLIST="$HOME/Library/LaunchAgents/com.turntrout.ccr.plist"
-    if [[ -L "$CCR_PLIST" ]]; then
-        # `launchctl list` can be hundreds of lines; captured to a var so a
-        # `grep -q` match doesn't SIGPIPE the still-writing upstream (see the
-        # bw-node checks above for the same fix).
-        launchd_list_out="$(launchctl list 2>/dev/null)"
-        if [[ "$launchd_list_out" == *com.turntrout.ccr* ]]; then
-            pass "ccr launch agent loaded"
-        else
-            fail "ccr launch agent" "plist symlinked but not loaded (run: launchctl bootstrap gui/$(id -u) $CCR_PLIST)"
-        fi
-    else
-        skip "ccr launch agent" "$CCR_PLIST not present"
-    fi
-
     # setup.bash evicts the retired exit-node login agent on every run; if it
     # is back, something re-rendered it and the next login re-engages the
     # exit node whose teardown deletes the default route (CLAUDE.md "VPN").

@@ -32,8 +32,7 @@ apis:
     base-url: https://api.venice.ai/api/v1
     api-key-env: VENICE_INFERENCE_KEY
     # Model ids match Venice's /v1/models. Re-check after major Venice
-    # catalog rotations — claude-guard/bin/lib/venice-resolve.bash can confirm the
-    # current `default_code` trait owner.
+    # catalog rotations.
     models:
       qwen3-coder-480b-a35b-instruct-turbo:
         aliases: ["coder", "code", "qwen"]

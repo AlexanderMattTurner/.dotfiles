@@ -25,8 +25,10 @@ repos:
       - id: shfmt
         args: [-w, -i, "4"]
         # Explicit list, not `**/*.bash`: template-synced files the repo
-        # does not own must not be reformatted.
-        files: ^(\.bashrc|setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash)|\.claude/hooks/.*\.bash|\.devcontainer/.*\.bash)$
+        # does not own must not be reformatted. `.claude/hooks/` is gone
+        # (it was a symlink into the old claude-guard checkout), so no
+        # pattern covers it.
+        files: ^(\.bashrc|setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash))$
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1
@@ -39,7 +41,7 @@ repos:
         # every push. Following the source is the stronger fix than excluding
         # SC1091: the library's own contents get checked at each call site.
         args: [-x, -e, SC2016]
-        files: ^(setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash)|\.claude/hooks/.*\.bash|\.devcontainer/.*\.bash)$
+        files: ^(setup\.bash|bin/[^/]*\.(bash|sh)|bin/lib/.*\.sh|bin/dotfiles|\.hooks/(pre-push|pre-commit|commit-msg|.*\.bash))$
       - id: shellcheck
         name: shellcheck (.bashrc)
         # .bashrc has no shebang and is sourced, not executed. Tell shellcheck

@@ -53,8 +53,8 @@ jobs:
           setup-python: "true"
 
       # Leg 1 of the lifecycle (session-setup.sh) is what installs the toolchain
-      # upstream, and it cannot run here: `.claude/hooks` is a symlink into the
-      # .gitignore'd claude-guard/ checkout, so it dangles in a CI checkout. Leg
+      # upstream, and it cannot run here: this repo has no `.claude/hooks` at
+      # all, so there is no session-setup script to run. Leg
       # 4 runs bin/pre-push -> bin/lint.bash -> `pre-commit run --all-files`,
       # which needs the same tools lint.yml installs. Same scripts, same pins.
       - name: Install pinned gitleaks (checksum-verified)

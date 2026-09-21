@@ -38,11 +38,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Clone claude-guard (pinned)
-        # Checks out the commit in claude-guard.ref so CI validates hooks
-        # against the same claude-guard that setup.bash installs.
-        run: bash bin/clone-claude-guard.bash
-
       - name: Install pinned gitleaks (checksum-verified)
         # Version + SHA-256 are pinned inside the script. The full-history
         # secret scan itself runs via the pre-commit gitleaks hook below
@@ -91,9 +86,6 @@ jobs:
         run: |
           pre-commit run --all-files --show-diff-on-failure || rc=$?
           [ "${rc:-0}" -le 1 ] || exit "$rc"
-
-      - name: Test Claude Code hooks
-        run: bash claude-guard/tests/test-claude-hooks.bash
 
       - name: Run repo unit tests
         # Runs the safe_link / stale-symlink / security-argv guards, among

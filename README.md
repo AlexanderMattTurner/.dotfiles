@@ -29,7 +29,6 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
     - Automatic commit message generation,
     - Aider for CLI coding,
     - VSCodium with Roo Cline extension for privacy-first AI pair programming,
-    - An AI sandbox and security wrapper via the [`agent-glovebox`](https://github.com/AlexanderMattTurner/agent-glovebox) submodule. Also enables worktrees by default.
 
     - `wut` command to explain shell output.
     - `mods` (Charm) for piping shell output to an LLM, e.g. `<failing-cmd> 2>&1 | mods 'what broke?'`. Routes through Venice via `apps/mods/mods.yml`.
@@ -58,10 +57,7 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
 
     - `AGENTS.md` symlinks to `CLAUDE.md` so Cursor/Aider/OpenCode pick up the same project context Claude Code uses.
     - `.mcp.json` configures the filesystem MCP server scoped to `~/.dotfiles` for Claude Code sessions in this repo.
-    - `.claude/hooks/notify.bash` fires cross-platform desktop notifications when Claude Code needs input.
-    - `.claude/hooks/monitor.bash` — **AI safety monitor** implementing the [AI control](https://arxiv.org/abs/2312.06942) pattern: a cheap, trusted model (qwen3-coder-480b via Venice E2EE, or Haiku) reviews every tool call before the primary model can execute it. Two escalation tiers: **deny** (block suspicious action, agent continues) and **ask** (halt agent, get the human — potential misalignment). Logs decisions to `~/.cache/claude-monitor/monitor.jsonl`. Overhead: ~250–700 tokens per monitored call (~$0.05 per 100 calls on Venice). Skips Read calls. Disable with `MONITOR_DISABLED=1`.
-    - `.claude/hooks/statusline.bash` shows model, branch, context usage, and session cost in the Claude Code status line.
-    - **Push notifications** for monitor alerts: run `bash bin/setup-ntfy.bash` to configure [ntfy.sh](https://ntfy.sh) — the monitor sends a push to your phone on ASK-tier escalations (potential misalignment). Session startup reminds you if not configured.
+    - **Push notifications** for monitor alerts: run `bash bin/setup-ntfy.bash` to configure [ntfy.sh](https://ntfy.sh) — glovebox's monitor sends a push to your phone on ASK-tier escalations (potential misalignment).
 
 13. macOS keyboard-driven WM: `aerospace` for tiling.
 

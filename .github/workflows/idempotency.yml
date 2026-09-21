@@ -42,11 +42,6 @@ jobs:
           # Read-only job — don't leave the checkout token usable by later steps.
           persist-credentials: false
 
-      - name: Clone claude-guard (pinned)
-        # Checks out the commit in claude-guard.ref so the symlink set under
-        # test matches what setup.bash installs.
-        run: bash bin/clone-claude-guard.bash
-
       - name: Run idempotency check
         env:
           # Scratch dirs under $RUNNER_TEMP keep the workflow's own log/listing

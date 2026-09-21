@@ -8,54 +8,23 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
 - `setup.bash` — top-level installer; idempotent, supports `--link-only`.
   Always finishes by running `bin/doctor.bash` so the user sees a green
   health summary (or knows exactly what's still broken).
-- `claude-guard/` — cloned repo
-  (`AlexanderMattTurner/agent-glovebox`), `.gitignore`d.
-  `setup.bash` (via `bin/clone-claude-guard.bash`) checks it out at the
-  commit pinned in `claude-guard.ref` on every run — the subrepo carries
-  the AI-safety monitor, so it is pinned like any security-critical
-  dependency instead of floating at origin/main. Bump with
-  `bash bin/clone-claude-guard.bash --bump` and commit the ref change
-  via PR; `doctor.bash` FAILs when the checkout drifts from the pin.
-  Contains all Claude Code configuration: hooks, skills, project/global
-  settings, wrapper scripts, Venice/ccr routing, and the ccr
-  LaunchAgent plist. `.claude/` in this repo is symlinks into this
-  directory.
-  - `.claude/hooks/monitor.py` + `.claude/hooks/monitorlib/` — AI
-    safety "trusted monitor" PreToolUse hook. Sends each tool call to a
-    cheap/OSS model for review before execution (the "AI control"
-    pattern). Launched via `monitor-launch.bash` and
-    `monitor-dispatch.bash`. Providers and their key env vars come from
-    `.claude/hooks/monitor-providers.json`, the SSOT — Anthropic and
-    Venice today. Logs decisions to
-    `~/.cache/claude-monitor/monitor.jsonl` (`MONITOR_LOG`), and reads
-    its policy prompt from `/etc/claude-monitor/policy.txt`
-    (`MONITOR_POLICY`).
-  - `hooks/notify.bash` — cross-platform desktop notification for the
-    Notification lifecycle hook.
-  - `hooks/statusline.bash` — shows model, branch, context usage, and
-    session cost in the Claude Code status line.
-  - `bin/claude-private`, `bin/claude-paranoid` — claude-code wrappers
-    that route through ccr to Venice. `claude-private` defaults to
-    Venice's `default_code` model and escalates to `claude-opus-4-7`
-    when `CLAUDE_PRIVATE_THINK=1`; `claude-paranoid` always uses
-    `default_code` with no escalation. Both source
-    `bin/lib/venice-resolve.bash` for the cached model id with a
-    hardcoded fallback.
-  - `launchagents/com.turntrout.ccr.plist` — ccr LaunchAgent.
-  - `user-config/` — global (user-level) Claude Code config symlinked
-    to `~/.claude/` by `symlinks.sh`.
+- `agent-glovebox/` — the sandboxed-Claude subrepo
+  (`AlexanderMattTurner/agent-glovebox`), `.gitignore`d and
+  **user-managed**: this repo neither clones nor pins it. Clone it
+  yourself and run its own `setup.bash`, which installs
+  `~/.local/bin/glovebox` and owns Claude Code version updates and PATH
+  precedence from then on. `doctor.bash` only checks that the checkout
+  is present and that `glovebox` on PATH resolves into it.
+  Nothing else here wraps or dispatches into it, and nothing in
+  `.claude/` symlinks into it.
 - `bin/setup_llm.bash` — AI tooling installer invoked from `setup.bash`:
-  claude-code + ccr (pnpm), aider/llm/wut (uv), VSCodium + extensions,
-  llm-based commit-msg template hook. claude-code + ccr are pinned to the
-  versions in `claude-guard/package.json` (the canonical pin
-  `claude-guard`'s own setup + `test_claude_code_version.py` enforce,
-  read via `bin/lib/pnpm-pin.sh`), not installed as unpinned `latest`.
+  claude-code (pnpm), aider/llm/wut (uv), VSCodium + extensions,
+  llm-based commit-msg template hook. claude-code is pinned to the
+  version in `agent-glovebox/package.json` (the canonical pin glovebox's
+  own setup + `test_claude_code_version.py` enforce, read via
+  `bin/lib/pnpm-pin.sh`), not installed as unpinned `latest`.
   The uv tools are pinned too (`AIDER_PIN`/`WUT_PIN`/`LLM_PIN` at the
-  top of the script — bump there). Also refreshes the Venice
-  `default_code` model cache via the subrepo's
-  `bin/lib/venice-resolve.bash`. The ccr binary it installs is what the
-  `com.turntrout.ccr` LaunchAgent starts; without this script, that
-  LaunchAgent KeepAlive-respawns a missing binary.
+  top of the script — bump there).
 - `bin/lib/safe_link.sh` — the only place that creates user-facing symlinks.
   Backs up real files to `~/.dotfiles-backup/<UTC-timestamp>/` before
   overwriting.
@@ -72,11 +41,8 @@ keeping `setup.bash`, `doctor.bash`, and CI honest with each other.
   pick up the same project context Claude Code uses.
 - `.mcp.json` — Claude Code MCP server config; currently registers the
   filesystem MCP scoped to `~/.dotfiles`.
-- `.claude/` — mostly symlinks into `claude-guard/`:
-  `hooks/`, `README.md`. `.claude/skills/` is a real
-  tracked directory populated by `template-sync` from the upstream template;
-  any private skills from `claude-guard/skills/` must be
-  individually symlinked in by `setup.bash` if needed.
+- `.claude/` — all real tracked content, no symlinks. `.claude/skills/`
+  is populated by `template-sync` from the upstream template.
 - `Brewfile` — package manifest, gated by `if OS.mac?` for cask blocks.
 - `launchagents/`, `etc/sudoers.d/` — `__USERNAME__` templates rendered
   during install.
@@ -174,15 +140,15 @@ Where a new symlink belongs:
 
 `safe_link` always repoints with `ln -sfn` — the `-n` is load-bearing.
 A symlink whose current target resolves to a *directory* (e.g.
-`~/.claude/commands`, `~/.config/nvim`, `~/.devcontainer`) would, under a
+`~/.config/nvim`, `~/.claude/hooks`) would, under a
 plain `ln -sf`, be dereferenced so the new link lands *inside* the old
 directory while the symlink itself stays pointed at the stale target. Never
 drop the `-n`.
 
 Removal is the inverse: `setup.bash` runs `bin/lib/stale-symlinks.sh --prune`
 right after the link loops, so a rename that orphans a link under
-`$DOTFILES_DIR` (e.g. `~/.local/bin/claude-private` after the wrapper became
-`claude-guard`) is cleaned up on the next `--link-only` run rather than
+`$DOTFILES_DIR` (e.g. `~/.local/bin/claude-account` after mid-session
+account rotation was removed) is cleaned up on the next `--link-only` run rather than
 lingering until someone answers `doctor.bash`'s interactive "Refresh symlinks
 now?" prompt. Prune only ever removes already-dangling symlinks, so unlike
 `safe_link` it needs no backup. That prompt only fires for standalone `doctor`
@@ -193,15 +159,11 @@ never blocks on input.
 
 This repo runs **no** Claude Code hooks. `.claude/settings.json` carries
 `env` and permission denies only, and it is in `template-sync.yaml`'s
-`EXCLUDE_PATHS` so the template cannot reintroduce a `hooks` block.
-
-The reason is structural, not a preference. `.claude/hooks` is a symlink
-into the `.gitignore`d `claude-guard/` checkout, and `template-sync.sh`'s
-`process_file()` skips every synced path that is or sits under a symlink.
-A synced `.claude/settings.json` therefore always names hook scripts this
-tree cannot have, and Claude Code prints `No such file or directory` on
-every tool call that matches one. The hook suite belongs to claude-guard
-and runs for sessions rooted there.
+`EXCLUDE_PATHS` so the template cannot reintroduce a `hooks` block. The
+hook suite belongs to glovebox and runs for sessions rooted there; a
+synced `settings.json` would only name scripts this tree does not have,
+and Claude Code prints `No such file or directory` on every tool call
+that matches one.
 
 A fresh web/cloud session in this repo installs no tooling of its own, so
 a new dependency in `.pre-commit-config.yaml` or `bin/pre-push` must be
@@ -217,40 +179,15 @@ installable from the session by hand.
   `pypi`, `duplicati` (the settings-encryption key that decrypts the
   `enc-v1:` target URL, and with it the remote credentials, in Duplicati's
   server database — the LaunchAgent runs the server under `envchain
-  duplicati` for exactly this), and one per Claude subscription for
-  `bin/claude-account.bash`
-  (any name; it scans every namespace holding a
-  `CLAUDE_CODE_OAUTH_TOKEN`, or the ordered list in
-  `CLAUDE_ACCOUNT_NAMESPACES`). Seed a Claude account with `claude
-  setup-token` signed in as it, then `envchain --set <ns>
-  CLAUDE_CODE_OAUTH_TOKEN`.
-- Mid-session rotation is a loopback proxy, `bin/claude-rotate-proxy.py`.
-  Claude Code fixes how it presents a credential at launch from the slot
-  the token arrived in, so the `claude` fish function launches the client
-  holding only a sentinel `CLAUDE_CODE_OAUTH_TOKEN` (which fixes the
-  subscription presentation — Bearer + the `oauth-2025-04-20` beta) and
-  points `ANTHROPIC_BASE_URL` at the proxy. The proxy asks `claude-account
-  --pick` which namespace to serve, issues the upstream request as
-  `envchain <ns> curl` so the token never enters the proxy process, and on
-  a usage-limit 429 it reads straight off the response it calls
-  `claude-account --cooldown` and replays on the next account — denial to
-  rotated token in one request, no transcript grep and no poll. On an
-  account change `--pick` fires `glovebox login-sync` so live sandboxes
-  converge. Verified end to end: `tests/test_claude_account.py`'s proxy
-  test drives the real proxy + real curl against a fake Anthropic and a
-  stub envchain, and against the live API in
-  `agent-glovebox` PR #3133 the presentation was accepted (200). The
-  proxy binds 127.0.0.1 only, is a per-machine singleton (a second start
-  fails to bind), and self-exits when idle — nothing to install, nothing
-  for doctor/uninstall beyond the settings-drift and `--pick` checks.
-  `CLAUDE_ACCOUNT_PROBE_INTERVAL` (default 300s) is how long a healthy
-  `.ok` stamp is trusted before `--pick` re-probes. An exported
-  `ANTHROPIC_API_KEY` outranks the sentinel and breaks the proxy (it
-  presents as an API key with no oauth beta), so the `claude` fish
-  function must NOT export it and drops any inherited one with `env -u`.
-  The proxy's `envchain <ns> curl` is the sanctioned token path: the
-  credential expands only in the curl child, on no argv and in no file —
-  the same discipline `_probe` uses.
+  duplicati` for exactly this).
+- **There is no multi-account rotation.** `bin/claude-account.bash`,
+  `bin/lib/claude-account-lib.sh`, the loopback proxy
+  `bin/claude-rotate-proxy.py`, and their doctor checks were deleted —
+  don't resurrect them, nor the `claude` fish wrapper
+  (`apps/fish/functions/claude.fish`) that was deleted alongside them.
+  Claude Code signs in on its own. An exported `ANTHROPIC_API_KEY`
+  outranks subscription credentials and silently bills per token; never
+  export one here.
 - Secrets must never appear on argv. Pipe stdin → stdin between `bw`,
   `envchain`, and child commands. See `bin/bw-add-secret.bash` for the
   pattern.
@@ -267,41 +204,14 @@ installable from the session by hand.
 
 ### Trusted infrastructure protection
 
-The AI safety monitor (`.claude/hooks/monitor.py` and its
-`monitorlib/` package), its policy prompt, audit log, and ntfy config
-must be unreadable and unmodifiable by the monitored model. If the model can read the monitor, it can find
-parsing vulnerabilities or learn which patterns are flagged and
-tailor actions to evade detection.
+The AI safety monitor lives in `agent-glovebox/` and is that repo's
+concern, not this one — it runs inside the sandbox glovebox starts, with
+its policy, audit log and keys outside the monitored model's reach. This
+repo ships no monitor hook and no hardening script; do not add one here.
+On a plain `claude` session there is no monitor at all, and protection is
+Claude Code's own permission prompts — never
+`--dangerously-skip-permissions`.
 
-**Defense layers (devcontainer):**
-
-1. **Root ownership (kernel-enforced).**
-   `.devcontainer/harden-monitor.bash` sets `monitor.py` to
-   `root:root 700` and `monitorlib/` to `root:root` `go-rwx`
-   (unreadable by the `node` user Claude runs as), the policy prompt
-   at `/etc/claude-monitor/policy.txt` to `root:root 600`, and the
-   log directory to `root:root 1733` (append-only for non-root). It
-   also records a checksum at `/etc/claude-monitor/monitor.sha256`
-   (mode 444).
-
-2. **Dispatch wrapper.**  Shell scripts must be readable to execute,
-   so `settings.json` points to `monitor-dispatch.bash`, a readable
-   wrapper that routes to the devcontainer sidecar or delegates to the
-   root-owned `monitor.py`. The model can read the dispatch but learns
-   nothing about detection logic — that lives in `monitorlib/`.
-
-3. **Deny rules (defense in depth).** `settings.json` denies
-   `Read(/run/monitor-secret/**)`. Glob patterns are trivially
-   bypassable, so they catch accidental reads only and are not a
-   security boundary; the root ownership in layer 1 is.
-
-4. **`IS_SANDBOX=no`** in `devcontainer.json` keeps the monitor
-   active inside the container (the Anthropic cloud sets
-   `IS_SANDBOX=yes`, which skips monitoring).
-
-**On the host** (no devcontainer), root ownership isn't enforced
-automatically — the user owns the repo. Protection comes from Claude
-Code's permission prompts (no `--dangerously-skip-permissions`).
 
 ### AI provider routing
 
@@ -323,6 +233,61 @@ Code's permission prompts (no `--dangerously-skip-permissions`).
   match Venice's `/v1/models` and rotate, so treat these as examples, not
   a frozen list). The `mods` fish function wraps invocations in
   `envchain ai` so `VENICE_INFERENCE_KEY` is populated from the Keychain.
+
+### Disk space
+
+This machine reached 98% full (11GiB free of 460GiB) with nothing flagging
+it. Two different things eat the disk, and they need opposite responses:
+
+- **Package-manager stores** (pnpm, uv, Homebrew downloads, pre-commit)
+  keep every version forever until explicitly pruned — pnpm's store alone
+  held 7.4GiB, of which 5.3GiB was unreferenced. This *is* garbage. Each
+  has its own prune (`pnpm store prune`, `uv cache prune`, `brew cleanup
+  --prune=all`, `pre-commit gc`, `limactl prune`, `glovebox gc`); doctor
+  names them rather than wrapping them, so they stay correct as those
+  tools change.
+- **glovebox's lima kata VMs** are the bigger number (five `gb-kata*`
+  instances reached 66GiB between them; one hit 33GiB while in `Broken`
+  state — stale sockets from a launch that died, not a running VM) but
+  they are **not** garbage, and doctor must not offer to prune them.
+
+**Do not "fix" the VM images by adding TRIM — discard is already plumbed
+end to end, and verified.** The chain is `container → devmapper thin pool
+(discard_passdown) → data.img (sparse) → ext4 / (mounted discard) → vda
+raw image (sparse) → APFS`; containerd sets `discard_blocks = true` and
+`dmsetup status` reports `discard_passdown`. Measured on a live instance:
+**10.12GiB allocated on the host against 9.8GiB used in-guest**, with
+`fstrim` finding **0B** left to return, because online discard had already
+done it. Freed guest blocks come back on their own.
+
+Every layer is likewise provisioned generously and allocated sparsely, so
+a configured size is a ceiling and never a cost — the 40GiB `disk:` in
+`lima.yaml` was 10.12GiB on disk, and the 20GiB `data.img` was 2.2GiB.
+**Never read a provisioned size as consumption.** A VM's footprint is real,
+live content: an Ubuntu base (~3.2GiB), Kata Containers shipping its own
+guest kernel and rootfs (~2GiB), containerd plus its thin pool (~3GiB),
+and the signing/proxy tooling (~320MiB) — roughly 9GiB is the floor for a
+nested-virt sandbox, and the rest is images someone actually pulled.
+
+So there is nothing for a prune to reclaim; `limactl delete` is the only
+lever, which makes it a decision rather than a cleanup. Doctor reports the
+number and points at `limactl list` instead of suggesting a command.
+
+`disk_space_health` in `bin/lib/disk-space.sh` is the single classifier
+(`ok:<gib>` / `low:<gib>` / `critical:<gib>` / `unknown`). It measures
+**absolute free GiB, not percent used**: percent is a ratio to total
+capacity, but what actually breaks a build or a VM boot is headroom. It
+answers `unknown` — never `ok` — when `df` is missing or its columns don't
+parse, for the same reason `tmux_snapshot_health` only under-reports: this
+check exists to catch a disk that filled up, and must not invent headroom
+it did not measure. `disk_lima_image_kib` reports KiB rather than GiB so
+its tests need fixtures of kilobytes, not gigabytes; `bin/doctor.bash`
+owns the rounding and suppresses a figure under 1GiB as noise.
+
+Adding a failure mode = new state there + an arm in `bin/doctor.bash`'s
+case + a case in `tests/test_disk_space.py` (which asserts doctor has an
+arm for every state, so skipping the second half fails the suite instead
+of surfacing `unhandled state` at runtime).
 
 ### Backups
 
@@ -621,10 +586,9 @@ should still land upstream in
 `alexander-turner/claude-automation-template` rather than accumulating
 local drift that invites conflict PRs.
 
-This repo symlinks `.claude/{README.md,hooks}` into the
-gitignored `claude-guard/` — never cloned in CI, so the links dangle —
-and `.hooks/{pre-push,prepare-commit-msg}` into `bin/`, where a naive
-sync `cp` would write *through* the live link and corrupt the target.
+This repo symlinks `.hooks/{pre-push,prepare-commit-msg}` into `bin/`,
+where a naive sync `cp` would write *through* the live link and corrupt
+the target.
 `template-sync.sh`'s `process_file()` now skips any synced path that
 is, or sits under, a symlink generically (folded upstream into
 `alexander-turner/claude-automation-template`), so this is handled by
@@ -639,19 +603,6 @@ bullet):
   string `'true'` never matches, which made "dry run" dispatches open
   real PRs. (The `actionlint` pre-commit hook now flags this class of
   expression-type mismatch.)
-- A `Prune dangling .claude symlinks` step in `claude-review.yaml`, added to
-  every job that starts Claude Code (`review`, `merge_delta_review`,
-  `thread_resolve`). This repo tracks `.claude/hooks` and `.claude/README.md`
-  as symlinks into `claude-guard/`, which is `.gitignore`d and so absent from
-  the trusted-branch checkout those jobs do. Claude Code stats `.claude/hooks`
-  at startup and dies with `ENOENT: ... statx '.claude/hooks'` on **every rung**
-  of the credential ladder, which then reports the aggregate as
-  `claude-run: every configured Claude credential errored`. **That message is a
-  lie — do not go looking for an expired token.** The prune runs
-  `bin/prune-dangling-symlinks.bash .claude` right after checkout; wiring is
-  locked by `tests/test_prune_dangling_symlinks.py`. Upstream doesn't need this
-  (the template has no `claude-guard` symlinks), so it is a permanent local
-  divergence rather than something to fold back.
 - The `sh-extension` pre-commit hook's `exclude` pattern additionally
   skips `.github/scripts/` and `.hooks/lint-skills.sh`: both are
   populated verbatim by `template-sync` from files the template itself

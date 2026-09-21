@@ -1,7 +1,7 @@
 """pnpm_pin_spec (bin/lib/pnpm-pin.sh): pin resolution + fallback contract.
 
-bin/setup_llm.bash uses this to pin claude-code/ccr to the versions in
-claude-guard/package.json. The fallback ("bare package name, rc 1") is
+bin/setup_llm.bash uses this to pin claude-code to the version in
+agent-glovebox/package.json. The fallback ("bare package name, rc 1") is
 what keeps a partial bootstrap (subrepo not cloned yet) installing
 *something* — so both directions are locked here.
 """
