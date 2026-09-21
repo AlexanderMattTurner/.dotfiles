@@ -7,10 +7,10 @@
 # and silently block every tool call. Run by `.github/workflows/hook-lifecycle.yaml`.
 #
 # Local divergence from the template: legs 1 and 3 are skipped when their script
-# is absent. `.claude/hooks` here is a symlink into the .gitignore'd
-# claude-guard/ checkout, so it dangles in every CI checkout and this repo
-# registers no Claude Code hooks at all. Legs 2 and 4 are real here and still
-# run. Drop the guards if this repo ever owns its own .claude/hooks/.
+# is absent. This repo has no `.claude/hooks` and registers no Claude Code
+# hooks at all — that suite belongs to glovebox, for sessions rooted there.
+# Legs 2 and 4 are real here and still run. Drop the guards if this repo
+# ever owns its own .claude/hooks/.
 
 set -euo pipefail
 
