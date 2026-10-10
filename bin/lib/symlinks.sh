@@ -35,6 +35,7 @@ $HOME/.config/nvim|$DOTFILES_DIR/apps/nvim|nvim config
 $HOME/.local/bin/bw-node|$DOTFILES_DIR/bin/bw-node|bw-node wrapper
 $HOME/.claude/settings.json|$DOTFILES_DIR/apps/claude-user/settings.json|Claude Code settings
 $HOME/.claude/hooks/gate-pr-skill.py|$DOTFILES_DIR/apps/claude-user/hooks/gate-pr-skill.py|PR-creation gate hook
+$HOME/.claude/skills/pr-creation|$DOTFILES_DIR/.claude/skills/pr-creation|pr-creation skill (the gate hook requires it)
 $HOME/.claude/CLAUDE.md|$DOTFILES_DIR/apps/claude-user/CLAUDE.md|Claude Code global CLAUDE.md
 EOF
     if [[ "$(uname)" == "Darwin" ]]; then

@@ -37,6 +37,28 @@ def _verdict(command: str) -> dict | None:
     return json.loads(proc.stdout) if proc.stdout.strip() else None
 
 
+def _managed_pairs(home: str) -> dict[str, str]:
+    """Map each target managed_symlinks emits under `home` to its source."""
+    # Run managed_symlinks rather than grepping it: the list is generated (it
+    # branches on uname and globs .aider*), so only its output is the contract.
+    # setup.bash, doctor.bash and uninstall.bash all iterate exactly this.
+    #
+    # A synthetic HOME and an explicit env, because the developer's own shell
+    # exports DOTFILES_DIR: inheriting it lets this pass for the wrong reason
+    # on a laptop and fail on a runner.
+    emitted = subprocess.run(
+        ["bash", "-c", f'. "{DOTFILES}/bin/lib/symlinks.sh" && managed_symlinks'],
+        env={"PATH": os.environ["PATH"], "HOME": home, "DOTFILES_DIR": str(DOTFILES)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    return dict(
+        line.split("|")[:2] for line in emitted.stdout.splitlines() if "|" in line
+    )
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -105,28 +127,23 @@ def test_settings_hook_command_resolves_to_a_managed_symlink() -> None:
     referencing = [c for c in commands if HOOK.name in c]
     assert referencing, f"settings.json no longer invokes {HOOK.name}"
 
-    # Run managed_symlinks rather than grepping it: the list is generated (it
-    # branches on uname and globs .aider*), so only its output is the contract.
-    # setup.bash, doctor.bash and uninstall.bash all iterate exactly this.
-    #
-    # A synthetic HOME and an explicit env, because the developer's own shell
-    # exports DOTFILES_DIR: inheriting it lets this pass for the wrong reason
-    # on a laptop and fail on a runner.
     home = "/nonexistent-home"
-    emitted = subprocess.run(
-        ["bash", "-c", f'. "{DOTFILES}/bin/lib/symlinks.sh" && managed_symlinks'],
-        env={"PATH": os.environ["PATH"], "HOME": home, "DOTFILES_DIR": str(DOTFILES)},
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert emitted.returncode == 0, emitted.stderr
-    pairs = dict(
-        line.split("|")[:2] for line in emitted.stdout.splitlines() if "|" in line
-    )
+    pairs = _managed_pairs(home)
     target = f"{home}/.claude/hooks/{HOOK.name}"
     assert pairs.get(target) == str(HOOK), (
         f"{target} is not linked to {HOOK} by managed_symlinks"
     )
     for command in referencing:
         assert "~/.claude/hooks/" in command, command
+
+
+def test_the_skill_the_gate_requires_is_a_managed_symlink() -> None:
+    """The gate is user-level, so the skill it demands must be too.
+
+    The skill otherwise loads only in a repo that carries it; anywhere else the
+    gate denies every PR it sees, with no way through.
+    """
+    skill = DOTFILES / ".claude" / "skills" / "pr-creation"
+    assert (skill / "SKILL.md").is_file()
+    pairs = _managed_pairs("/nonexistent-home")
+    assert pairs.get("/nonexistent-home/.claude/skills/pr-creation") == str(skill)
