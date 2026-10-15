@@ -116,4 +116,6 @@
   "playwright.runGlobalSetupOnEachRun": false,
   "roo-cline.debug": false,
   "git.replaceTagsWhenPull": true,
+  "chat.agent.enabled": false,
+  "claudeCode.preferredLocation": "panel",
 }
