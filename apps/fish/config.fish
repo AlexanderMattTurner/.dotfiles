@@ -69,6 +69,8 @@ set -gx DOTFILES_DIR (git -C $_self_dir rev-parse --show-toplevel 2>/dev/null; o
 # These elements don't scale with font size
 set --universal tide_right_prompt_prefix ''
 set --universal tide_left_prompt_suffix ''
+# Cloud-context items show whenever any config exists, even when unused here
+set --universal tide_right_prompt_items (string match -rv '^(gcloud|kubectl|aws)$' $tide_right_prompt_items)
 
 abbr -a goosesay "cowsay -f $DOTFILES_DIR/apps/goose.cow"
 
