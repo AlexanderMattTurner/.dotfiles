@@ -25,7 +25,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus",
+  "model": "opus[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -78,13 +78,31 @@
       ]
     },
     "filesystem": {
-      "denyWrite": ["~/.bashrc", "~/.zshrc", "~/.profile", "~/.config/fish/**"],
-      "denyRead": ["~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "**/.env*"]
+      "denyWrite": [
+        "~/.bashrc",
+        "~/.zshrc",
+        "~/.profile",
+        "~/.config/fish/**"
+      ],
+      "denyRead": [
+        "~/.ssh/**",
+        "~/.aws/**",
+        "~/.gnupg/**",
+        "**/.env*"
+      ]
     }
   },
   "effortLevel": "medium",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "medium"
+    },
+    "claude-sonnet-5": {
+      "effortLevel": "high"
+    }
+  },
+  "tui": "fullscreen",
   "theme": "dark-ansi",
   "editorMode": "vim",
-  "skipAutoPermissionPrompt": true,
-  "tui": "fullscreen"
+  "skipAutoPermissionPrompt": true
 }
