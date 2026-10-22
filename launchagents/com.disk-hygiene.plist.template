@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.__USERNAME__.disk-hygiene</string>
+
+    <!-- Weekly package-manager-store prune + stale AI-agent worktree reap.
+         See CLAUDE.md "Disk space" for why this moved from doctor merely
+         naming prunes to a scheduled job running them (owner decision,
+         2026-10-04). Never touches lima/glovebox VMs. Rendered (not a plain
+         symlink) because __DOTFILES_DIR__ is per-machine. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__DOTFILES_DIR__/bin/disk-hygiene.bash</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/disk-hygiene.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/disk-hygiene.log</string>
+</dict>
+</plist>
