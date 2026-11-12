@@ -239,17 +239,37 @@ Claude Code's own permission prompts — never
 This machine reached 98% full (11GiB free of 460GiB) with nothing flagging
 it. Two different things eat the disk, and they need opposite responses:
 
-- **Package-manager stores** (pnpm, uv, Homebrew downloads, pre-commit)
-  keep every version forever until explicitly pruned — pnpm's store alone
-  held 7.4GiB, of which 5.3GiB was unreferenced. This *is* garbage. Each
-  has its own prune (`pnpm store prune`, `uv cache prune`, `brew cleanup
-  --prune=all`, `pre-commit gc`, `limactl prune`, `glovebox gc`); doctor
-  names them rather than wrapping them, so they stay correct as those
-  tools change.
+- **Package-manager stores** (pnpm, uv, Homebrew downloads, pre-commit) and
+  **stale AI-agent git worktrees** keep growing until something clears
+  them — pnpm's store alone held 7.4GiB, of which 5.3GiB was unreferenced,
+  and worktrees left under `/tmp/claude-worktrees/*` and
+  `agent-glovebox/.claude/worktrees/*` by ended sessions held ~0.9GiB each
+  of `.venv`/`node_modules`. This *is* garbage.
 - **glovebox's lima kata VMs** are the bigger number (five `gb-kata*`
   instances reached 66GiB between them; one hit 33GiB while in `Broken`
   state — stale sockets from a launch that died, not a running VM) but
-  they are **not** garbage, and doctor must not offer to prune them.
+  they are **not** garbage, and doctor must not offer to prune them, and
+  nothing below ever runs `limactl delete` or touches a glovebox VM.
+
+On 2026-10-04 the garbage above went unpruned long enough to fill the
+volume to 99% (6.5GiB free of 460GiB) and fail a glovebox launch with
+ENOSPC — doctor had only ever *named* the prune commands, never run them,
+so nothing acted until a human noticed. The owner decided this should be
+a standing job rather than a standing doctor FAIL: `bin/disk-hygiene.bash`
+runs `uv cache prune`, `pnpm store prune`, `brew cleanup --prune=all`,
+`pre-commit gc`, and `limactl prune` (each only when its tool is on PATH,
+each failure logged and non-fatal), then reaps worktrees under
+`/tmp/claude-worktrees/*` and `*/.claude/worktrees/*` for this repo and
+`agent-glovebox` — removing one only when it is unlocked, clean (`git
+status --porcelain` empty), its `HEAD` is contained in a remote-tracking
+branch, and it is untouched for 7+ days — then alerts via `osascript` on
+`low`/`critical` free space. A weekly LaunchAgent
+(`launchagents/com.disk-hygiene.plist.template`, rendered by `setup.bash`
+like the tailscaled plist since its paths are per-user) runs it; `dotfiles
+disk-hygiene --dry-run` runs it by hand. `limactl prune` here clears only
+unreferenced cache/template data, never an instance — the VM-is-not-garbage
+rule above still holds. `glovebox gc --schedule install` is a separate,
+already-installed job; this script does not duplicate it.
 
 **Do not "fix" the VM images by adding TRIM — discard is already plumbed
 end to end, and verified.** The chain is `container → devmapper thin pool

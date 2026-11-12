@@ -8,6 +8,7 @@
 #   dotfiles lint [--ci] [--fix]          # run all linters
 #   dotfiles tmux-gc [--dry-run]          # reap idle, empty tmux sessions
 #   dotfiles tmux-bootstrap               # start tmux + replay resurrect snapshot
+#   dotfiles disk-hygiene [--dry-run]     # prune caches, reap stale worktrees
 #
 # Wraps the underlying scripts in bin/ and setup.bash so users get a single
 # entry point with fish-completable subcommands. All extra args are passed
@@ -41,6 +42,9 @@ subcommands:
   tmux-bootstrap
              start the tmux server and replay the resurrect snapshot once
              (bin/tmux-bootstrap.bash); prints "primary" or "secondary"
+  disk-hygiene
+             prune package-manager stores and reap stale AI-agent worktrees
+             (bin/disk-hygiene.bash)
   help       show this message (alias: -h, --help)
 
 Extra args are forwarded to the underlying script.
@@ -83,6 +87,10 @@ tmux-gc)
 tmux-bootstrap)
     shift
     exec bash "$DOTFILES_DIR/bin/tmux-bootstrap.bash" "$@"
+    ;;
+disk-hygiene)
+    shift
+    exec bash "$DOTFILES_DIR/bin/disk-hygiene.bash" "$@"
     ;;
 *)
     printf "dotfiles: unknown subcommand %q\n\n" "$1" >&2

@@ -80,6 +80,23 @@ if $IS_MAC; then
         esac
     fi
 
+    DISK_HYGIENE_PLIST="$HOME/Library/LaunchAgents/com.$USER.disk-hygiene.plist"
+    if [[ -f "$DISK_HYGIENE_PLIST" ]]; then
+        if $ASSUME_YES; then
+            choice=y
+        else
+            read -rp "Unload + remove the disk-hygiene launch agent? (y/N) " choice
+        fi
+        case "$choice" in
+        y | Y)
+            launchctl bootout "gui/$(id -u)" "$DISK_HYGIENE_PLIST" 2>/dev/null || true
+            rm -f "$DISK_HYGIENE_PLIST"
+            echo "  removed disk-hygiene launch agent"
+            ;;
+        *) echo "  skip disk-hygiene launch agent" ;;
+        esac
+    fi
+
     TAILSCALED_PLIST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
     if [[ -f "$TAILSCALED_PLIST" ]]; then
         if $ASSUME_YES; then
