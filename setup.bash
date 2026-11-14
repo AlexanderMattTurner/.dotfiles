@@ -346,6 +346,15 @@ if [ "$(uname)" = "Darwin" ]; then
     # Installing either here would fight that eviction on every run.
     mkdir -p "$HOME/Library/LaunchAgents"
 
+    # Weekly prune of the package-manager stores (CLAUDE.md "Disk space").
+    # Bootstrap only when not loaded, so a re-run changes nothing.
+    CACHE_PRUNE_PLIST_DEST="$HOME/Library/LaunchAgents/com.turntrout.cache-prune.plist"
+    safe_link "$DOTFILES_DIR/launchagents/com.turntrout.cache-prune.plist" "$CACHE_PRUNE_PLIST_DEST"
+    if ! launchctl print "gui/$(id -u)/com.turntrout.cache-prune" >/dev/null 2>&1; then
+        launchctl bootstrap "gui/$(id -u)" "$CACHE_PRUNE_PLIST_DEST" 2>/dev/null ||
+            status_msg "WARN: could not load the cache-prune launch agent"
+    fi
+
     # Duplicati: the daily offsite backup. Its LaunchAgent is tracked here
     # rather than living only in ~/Library/LaunchAgents so a rebuilt machine
     # starts backing up again without anyone remembering to hand-write the

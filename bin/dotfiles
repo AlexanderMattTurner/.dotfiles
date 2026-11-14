@@ -7,6 +7,7 @@
 #   dotfiles link                         # refresh symlinks only (runs setup.bash --link-only)
 #   dotfiles lint [--ci] [--fix]          # run all linters
 #   dotfiles tmux-gc [--dry-run]          # reap idle, empty tmux sessions
+#   dotfiles cache-prune                  # prune pnpm/uv/brew/pre-commit stores
 #   dotfiles tmux-bootstrap               # start tmux + replay resurrect snapshot
 #
 # Wraps the underlying scripts in bin/ and setup.bash so users get a single
@@ -38,6 +39,8 @@ subcommands:
   setup      run the full installer (setup.bash)
   lint       run pre-commit hooks (bin/lint.bash → pre-commit run --all-files)
   tmux-gc    reap idle, empty tmux sessions (bin/tmux-gc.bash)
+  cache-prune
+             prune unused pnpm/uv/brew/pre-commit entries (bin/cache-prune.bash)
   tmux-bootstrap
              start the tmux server and replay the resurrect snapshot once
              (bin/tmux-bootstrap.bash); prints "primary" or "secondary"
@@ -79,6 +82,10 @@ lint)
 tmux-gc)
     shift
     exec bash "$DOTFILES_DIR/bin/tmux-gc.bash" "$@"
+    ;;
+cache-prune)
+    shift
+    exec bash "$DOTFILES_DIR/bin/cache-prune.bash" "$@"
     ;;
 tmux-bootstrap)
     shift

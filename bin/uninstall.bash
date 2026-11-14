@@ -59,6 +59,13 @@ remove_dotfile_symlink "$HOME/.config/fish/functions/fish_prompt.fish" \
     "$DOTFILES_DIR/apps/fish/functions/fish_prompt.fish"
 
 if $IS_MAC; then
+    CACHE_PRUNE_PLIST="$HOME/Library/LaunchAgents/com.turntrout.cache-prune.plist"
+    if [[ -L "$CACHE_PRUNE_PLIST" ]]; then
+        launchctl bootout "gui/$(id -u)" "$CACHE_PRUNE_PLIST" 2>/dev/null || true
+        remove_dotfile_symlink "$CACHE_PRUNE_PLIST" \
+            "$DOTFILES_DIR/launchagents/com.turntrout.cache-prune.plist"
+    fi
+
     # Removing this stops the daily offsite backup, so the prompt says so
     # outright — it is the one agent here whose absence loses data rather
     # than just convenience. --yes still removes it, matching every other
