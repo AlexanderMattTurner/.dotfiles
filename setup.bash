@@ -321,16 +321,21 @@ if [ "$(uname)" = "Darwin" ]; then
     if mullvad_cli="$(find_mullvad)"; then
         for split_app in "${MULLVAD_SPLIT_APPS[@]}"; do
             [ -d "$split_app" ] || continue
-            if [ "$(mullvad_split_tunnel "$mullvad_cli" "$split_app")" = not-excluded ]; then
-                status_msg "Excluding $split_app from the Mullvad tunnel"
-                if ! { "$mullvad_cli" split-tunnel set on &&
-                    "$mullvad_cli" split-tunnel app add "$split_app"; } >/dev/null; then
-                    status_msg "WARN: could not exclude $split_app from Mullvad"
-                fi
+            split_state="$(mullvad_split_tunnel "$mullvad_cli" "$split_app")"
+            if [ "$split_state" = off ]; then
+                "$mullvad_cli" split-tunnel set on >/dev/null || true
+                split_state="$(mullvad_split_tunnel "$mullvad_cli" "$split_app")"
             fi
+            if [ "$split_state" = not-excluded ]; then
+                status_msg "Excluding $split_app from the Mullvad tunnel"
+                "$mullvad_cli" split-tunnel app add "$split_app" >/dev/null || true
+                split_state="$(mullvad_split_tunnel "$mullvad_cli" "$split_app")"
+            fi
+            [ "$split_state" = excluded ] ||
+                status_msg "WARN: could not exclude $split_app from Mullvad ($split_state)"
         done
     fi
-    unset mullvad_cli split_app
+    unset mullvad_cli split_app split_state
 
     # No Claude or Tailscale login agent is installed here, by design:
     #   - the ccr agent belonged to the retired claude-guard checkout; ccr and

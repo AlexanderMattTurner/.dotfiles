@@ -597,8 +597,9 @@ if $IS_MAC; then
             [ -d "$split_app" ] || continue
             case "$(mullvad_split_tunnel "$mullvad_cli" "$split_app")" in
             excluded) pass "Mullvad split tunnel excludes $(basename "$split_app")" ;;
-            not-excluded) fail "Mullvad split tunnel" "$split_app goes through the VPN (run: \"$mullvad_cli\" split-tunnel set on && \"$mullvad_cli\" split-tunnel app add \"$split_app\")" ;;
-            *) ;; # already reported by the auto-connect arm
+            not-excluded) fail "Mullvad split tunnel" "$split_app goes through the VPN (run: \"$mullvad_cli\" split-tunnel app add \"$split_app\")" ;;
+            off) fail "Mullvad split tunnel" "off, so $split_app goes through the VPN (run: \"$mullvad_cli\" split-tunnel set on)" ;;
+            *) fail "Mullvad split tunnel" "cannot read the state for $split_app (run: \"$mullvad_cli\" split-tunnel get)" ;;
             esac
         done
     else

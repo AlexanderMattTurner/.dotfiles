@@ -94,7 +94,8 @@ ANKI = "/Applications/Anki.app"
     [
         (f"Split tunneling state: on\nExcluded applications:\n{ANKI}", 0, "excluded"),
         ("Split tunneling state: on\nExcluded applications:", 0, "not-excluded"),
-        (f"Split tunneling state: off\nExcluded applications:\n{ANKI}", 0, "not-excluded"),
+        (f"Split tunneling state: off\nExcluded applications:\n{ANKI}", 0, "off"),
+        ("Split tunneling state: On\nExcluded applications:", 0, "unreachable"),
         (f"Split tunneling state: on\nExcluded applications:\n{ANKI}.bak", 0, "not-excluded"),
         ("Error: Management RPC server or client error", 1, "unreachable"),
         ("", 0, "unreachable"),

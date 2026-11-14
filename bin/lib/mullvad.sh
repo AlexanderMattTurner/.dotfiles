@@ -59,8 +59,9 @@ MULLVAD_SPLIT_APPS=("/Applications/Anki.app")
 
 # Classify whether app $2 bypasses the tunnel for $1 (CLI path). Prints one of:
 #   excluded       split tunneling is on and lists the app
-#   not-excluded   the app goes through the tunnel (or split tunneling is off)
-#   unreachable    the CLI could not talk to the daemon
+#   not-excluded   split tunneling is on but does not list the app
+#   off            split tunneling is off, so every app goes through the tunnel
+#   unreachable    the CLI failed or printed output this parser does not know
 # Consumers: setup.bash, bin/doctor.bash, tests/test_mullvad.py.
 mullvad_split_tunnel() {
     local out
@@ -71,7 +72,7 @@ mullvad_split_tunnel() {
     case "$out" in
     *"Split tunneling state: on"*) ;;
     *"Split tunneling state: off"*)
-        echo not-excluded
+        echo off
         return
         ;;
     *)
