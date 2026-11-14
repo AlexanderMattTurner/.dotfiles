@@ -314,6 +314,24 @@ if [ "$(uname)" = "Darwin" ]; then
     fi
     unset ts_bin skew_msg skew_rc
 
+    # Mullvad split tunnel: apps in MULLVAD_SPLIT_APPS bypass the VPN (Anki
+    # sync fails on Mullvad exit IPs). Idempotent: acts only on a missing app.
+    # shellcheck source=bin/lib/mullvad.sh disable=SC1091
+    source "$DOTFILES_DIR/bin/lib/mullvad.sh"
+    if mullvad_cli="$(find_mullvad)"; then
+        for split_app in "${MULLVAD_SPLIT_APPS[@]}"; do
+            [ -d "$split_app" ] || continue
+            if [ "$(mullvad_split_tunnel "$mullvad_cli" "$split_app")" = not-excluded ]; then
+                status_msg "Excluding $split_app from the Mullvad tunnel"
+                if ! { "$mullvad_cli" split-tunnel set on &&
+                    "$mullvad_cli" split-tunnel app add "$split_app"; } >/dev/null; then
+                    status_msg "WARN: could not exclude $split_app from Mullvad"
+                fi
+            fi
+        done
+    fi
+    unset mullvad_cli split_app
+
     # No Claude or Tailscale login agent is installed here, by design:
     #   - the ccr agent belonged to the retired claude-guard checkout; ccr and
     #     its wrappers are gone, and glovebox supervises its own processes;

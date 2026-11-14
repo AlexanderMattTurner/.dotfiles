@@ -83,3 +83,27 @@ def test_tunnel_classification(
     proc = _run('mullvad_tunnel "$MULLVAD_CLI"', stub)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == expected
+
+
+ANKI = "/Applications/Anki.app"
+
+
+# Real `mullvad split-tunnel get` output (Mullvad 2026.5, macOS).
+@pytest.mark.parametrize(
+    "stdout,rc,expected",
+    [
+        (f"Split tunneling state: on\nExcluded applications:\n{ANKI}", 0, "excluded"),
+        ("Split tunneling state: on\nExcluded applications:", 0, "not-excluded"),
+        (f"Split tunneling state: off\nExcluded applications:\n{ANKI}", 0, "not-excluded"),
+        (f"Split tunneling state: on\nExcluded applications:\n{ANKI}.bak", 0, "not-excluded"),
+        ("Error: Management RPC server or client error", 1, "unreachable"),
+        ("", 0, "unreachable"),
+    ],
+)
+def test_split_tunnel_classification(
+    tmp_path: Path, stdout: str, rc: int, expected: str
+) -> None:
+    stub = _stub(tmp_path, stdout, rc)
+    proc = _run(f'mullvad_split_tunnel "$MULLVAD_CLI" "{ANKI}"', stub)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == expected
