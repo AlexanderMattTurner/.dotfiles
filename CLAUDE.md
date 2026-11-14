@@ -243,11 +243,9 @@ it. Two different things eat the disk, and they need opposite responses:
   keep every version forever until explicitly pruned — pnpm's store alone
   held 7.4GiB, of which 5.3GiB was unreferenced. This *is* garbage. Each
   has its own prune (`pnpm store prune`, `uv cache prune`, `brew cleanup
-  --prune=all`, `pre-commit gc`, `limactl prune`, `glovebox gc`).
-  `bin/cache-prune.bash` runs the first four weekly from the
-  `com.turntrout.cache-prune` LaunchAgent; it calls each tool's own prune
-  rather than reimplementing one, so it stays correct as those tools
-  change. `glovebox gc` has its own daily agent, owned by glovebox.
+  --prune=all`, `pre-commit gc`, `limactl prune`, `glovebox gc`); doctor
+  names them rather than wrapping them, so they stay correct as those
+  tools change.
 - **glovebox's lima kata VMs** are the bigger number (five `gb-kata*`
   instances reached 66GiB between them; one hit 33GiB while in `Broken`
   state — stale sockets from a launch that died, not a running VM) but

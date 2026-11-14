@@ -487,20 +487,6 @@ if $IS_MAC; then
         pass "retired tailscale-exit-node agent absent"
     fi
 
-    # The weekly package-manager prune (CLAUDE.md "Disk space"). Skip, not
-    # fail, when absent: only a full setup.bash installs it, not --link-only.
-    CACHE_PRUNE_PLIST="$HOME/Library/LaunchAgents/com.turntrout.cache-prune.plist"
-    if [[ ! -e "$CACHE_PRUNE_PLIST" && ! -L "$CACHE_PRUNE_PLIST" ]]; then
-        skip "cache-prune agent" "not installed, so package-manager stores grow unpruned (run setup.bash)"
-    else
-        check_symlink "$CACHE_PRUNE_PLIST" "$DOTFILES_DIR/launchagents/com.turntrout.cache-prune.plist" "cache-prune agent plist"
-        if launchctl print "gui/$(id -u)/com.turntrout.cache-prune" >/dev/null 2>&1; then
-            pass "cache-prune agent loaded"
-        else
-            fail "cache-prune agent" "installed but not loaded (run setup.bash)"
-        fi
-    fi
-
     # brew-autoupdate's background job sudos via this NOPASSWD fragment
     # (setup.bash renders + installs it). Skip, not fail: it needs sudo to
     # install, so a --link-only bootstrap legitimately won't have it yet.
