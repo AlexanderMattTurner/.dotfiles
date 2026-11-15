@@ -351,6 +351,34 @@ if [ "$(uname)" = "Darwin" ]; then
         status_msg "WARN: Duplicati.app missing — no offsite backups (brew install --cask duplicati)"
     fi
 
+    # Disk hygiene: weekly package-manager-store prune + stale AI-agent
+    # worktree reap (bin/disk-hygiene.bash). See CLAUDE.md "Disk space" —
+    # this machine hit 99% full silently on 2026-10-04, so the owner decided
+    # doctor should no longer just name these prunes, it should run them.
+    # Rendered like the tailscaled plist (per-user paths), not safe_link'd.
+    DISK_HYGIENE_PLIST_DEST="$HOME/Library/LaunchAgents/com.$USER.disk-hygiene.plist"
+    DISK_HYGIENE_PLIST_RENDERED="$(mktemp)"
+    trap 'rm -f "$DISK_HYGIENE_PLIST_RENDERED"' EXIT
+    ESCAPED_HOME="$(printf '%s' "$HOME" | sed 's/[\/&]/\\&/g')"
+    ESCAPED_DOTFILES_DIR="$(printf '%s' "$DOTFILES_DIR" | sed 's/[\/&]/\\&/g')"
+    sed -e "s/__USERNAME__/$ESCAPED_USER/g" \
+        -e "s/__DOTFILES_DIR__/$ESCAPED_DOTFILES_DIR/g" \
+        -e "s/__HOME__/$ESCAPED_HOME/g" \
+        "$DOTFILES_DIR/launchagents/com.disk-hygiene.plist.template" \
+        >"$DISK_HYGIENE_PLIST_RENDERED"
+    mkdir -p "$HOME/Library/Logs"
+    if [ ! -f "$DISK_HYGIENE_PLIST_DEST" ] || ! cmp -s "$DISK_HYGIENE_PLIST_RENDERED" "$DISK_HYGIENE_PLIST_DEST"; then
+        install -m 0644 "$DISK_HYGIENE_PLIST_RENDERED" "$DISK_HYGIENE_PLIST_DEST"
+    fi
+    rm -f "$DISK_HYGIENE_PLIST_RENDERED"
+    trap - EXIT
+    # Bootstrap only when not already loaded, matching the Duplicati pattern:
+    # a bootout/bootstrap cycle on every run would risk killing a prune that
+    # happens to be mid-flight.
+    if ! launchctl print "gui/$(id -u)/com.$USER.disk-hygiene" >/dev/null 2>&1; then
+        launchctl bootstrap "gui/$(id -u)" "$DISK_HYGIENE_PLIST_DEST" 2>/dev/null || true
+    fi
+
     # Install wally-cli for keyboard flashing. Non-fatal: doctor reports it
     # as an optional skip, so a flaky download must not abort setup here.
     if ! command_exists wally-cli && command_exists go; then

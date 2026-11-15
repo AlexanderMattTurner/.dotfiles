@@ -460,6 +460,21 @@ unknown)
     ;;
 esac
 
+if $IS_MAC; then
+    DISK_HYGIENE_PLIST="$HOME/Library/LaunchAgents/com.$USER.disk-hygiene.plist"
+    if [[ -f "$DISK_HYGIENE_PLIST" ]]; then
+        if launchctl print "gui/$(id -u)/com.$USER.disk-hygiene" >/dev/null 2>&1; then
+            pass "disk-hygiene launch agent loaded"
+        else
+            fail "disk-hygiene launch agent" "plist present but not loaded (run: launchctl bootstrap gui/$(id -u) $DISK_HYGIENE_PLIST)"
+        fi
+    else
+        fail "disk-hygiene launch agent" "$DISK_HYGIENE_PLIST missing (run setup.bash)"
+    fi
+else
+    skip "disk-hygiene launch agent" "launchd is macOS-only"
+fi
+
 # ── cron jobs ───────────────────────────────────────────────────────────────
 section "cron"
 
