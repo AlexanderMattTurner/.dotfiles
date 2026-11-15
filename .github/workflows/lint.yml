@@ -46,9 +46,10 @@ jobs:
 
       - name: Install fish
         # No pre-commit hook ships a fish syntax checker; install for the local
-        # fish-syntax hook in .pre-commit-config.yaml.
+        # fish-syntax hook in .pre-commit-config.yaml. Ubuntu's own archive, not
+        # the fish-shell PPA: the PPA publishes no build for new Ubuntu
+        # releases, so its apt source 404s when the runner image moves.
         run: |
-          sudo apt-add-repository -y ppa:fish-shell/release-3
           sudo apt-get update
           sudo apt-get install -y fish
 
