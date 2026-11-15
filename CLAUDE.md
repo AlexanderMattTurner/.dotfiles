@@ -375,6 +375,14 @@ engaged. The `mullvad` fish function is a thin
 wrapper over the app-bundled CLI (`bin/lib/mullvad.sh` is the bash-side
 resolver of the same path).
 
+**An app that a service blocks on Mullvad IPs gets split-tunneled, not an
+exit node.** AnkiWeb refuses Mullvad exit IPs, so Anki sync failed unless
+the Mullvad app was disabled. `MULLVAD_SPLIT_APPS` in `bin/lib/mullvad.sh` lists
+apps that bypass the tunnel; `setup.bash` adds each installed one and
+`doctor.bash` FAILs if one is missing. Only that app's traffic leaves in
+the clear. Routing through a Tailscale exit node instead would hit the
+route-deletion bug below.
+
 The reason is a verified bug, not a preference. The Homebrew
 `tailscaled` uses Tailscale's generic BSD userspace router, and on
 macOS that router mishandles the `0.0.0.0/0` route an exit node needs.

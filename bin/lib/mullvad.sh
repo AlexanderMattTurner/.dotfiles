@@ -50,3 +50,35 @@ mullvad_tunnel() {
     *) echo unreachable ;;
     esac
 }
+
+# Apps that must bypass the tunnel. AnkiWeb refuses Mullvad exit IPs, so Anki
+# sync fails behind the VPN; excluding the one app beats disabling the VPN.
+# Tailscale exit nodes are not the alternative (see CLAUDE.md "VPN").
+# shellcheck disable=SC2034 # read by setup.bash and bin/doctor.bash
+MULLVAD_SPLIT_APPS=("/Applications/Anki.app")
+
+# Classify whether app $2 bypasses the tunnel for $1 (CLI path). Prints one of:
+#   excluded       split tunneling is on and lists the app
+#   not-excluded   split tunneling is on but does not list the app
+#   off            split tunneling is off, so every app goes through the tunnel
+#   unreachable    the CLI failed or printed output this parser does not know
+# Consumers: setup.bash, bin/doctor.bash, tests/test_mullvad.py.
+mullvad_split_tunnel() {
+    local out
+    out="$("$1" split-tunnel get 2>/dev/null)" || {
+        echo unreachable
+        return
+    }
+    case "$out" in
+    *"Split tunneling state: on"*) ;;
+    *"Split tunneling state: off"*)
+        echo off
+        return
+        ;;
+    *)
+        echo unreachable
+        return
+        ;;
+    esac
+    if grep -qxF "$2" <<<"$out"; then echo excluded; else echo not-excluded; fi
+}

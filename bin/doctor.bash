@@ -608,6 +608,15 @@ if $IS_MAC; then
         disconnected) fail "Mullvad tunnel" "not connected — traffic is in the clear (run: \"$mullvad_cli\" connect)" ;;
         *) ;; # already reported by the auto-connect arm
         esac
+        for split_app in "${MULLVAD_SPLIT_APPS[@]}"; do
+            [ -d "$split_app" ] || continue
+            case "$(mullvad_split_tunnel "$mullvad_cli" "$split_app")" in
+            excluded) pass "Mullvad split tunnel excludes $(basename "$split_app")" ;;
+            not-excluded) fail "Mullvad split tunnel" "$split_app goes through the VPN (run: \"$mullvad_cli\" split-tunnel app add \"$split_app\")" ;;
+            off) fail "Mullvad split tunnel" "off, so $split_app goes through the VPN (run: \"$mullvad_cli\" split-tunnel set on)" ;;
+            *) fail "Mullvad split tunnel" "cannot read the state for $split_app (run: \"$mullvad_cli\" split-tunnel get)" ;;
+            esac
+        done
     else
         skip "Mullvad VPN" "Mullvad VPN.app not installed (brew install --cask mullvad-vpn)"
     fi
