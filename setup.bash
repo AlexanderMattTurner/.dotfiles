@@ -101,6 +101,12 @@ if [ "$(uname)" = "Darwin" ]; then
         sudo launchctl bootout "system/com.$USER.tailscaled" 2>/dev/null || true
         sudo rm -f "$RETIRED_TAILSCALED_PLIST"
     fi
+    # The Homebrew formula's CLI stays on PATH, where scripts would reach it
+    # instead of the app's CLI and talk to the daemon removed above.
+    if command_exists brew && [ -d "$(brew --prefix)/opt/tailscale" ]; then
+        status_msg "Uninstalling retired Homebrew tailscale formula"
+        brew uninstall tailscale || status_msg "WARN: could not uninstall the tailscale formula"
+    fi
 fi
 
 [[ -f "$HOME/.extras.bash" ]] || touch "$HOME/.extras.bash"
@@ -282,13 +288,16 @@ if [ "$(uname)" = "Darwin" ]; then
         sudo rm -f "$TAILSCALE_SHIM"
     fi
 
-    # Egress VPN: engage a Mullvad exit node when none is set. LAN access
-    # keeps the router and LAN devices reachable. Acts only on `none`, so a
-    # re-run is a no-op and a hand-picked exit node is left alone.
+    # Egress VPN: engage an automatic exit node when a connected app has none.
+    # auto:any picks among every exit node this device may use, which is the
+    # Mullvad relays while no tailnet peer advertises one; doctor FAILs if it
+    # picks a non-Mullvad node. LAN access keeps the router and LAN devices
+    # reachable. Acts only on `none`, so a re-run is a no-op.
     # shellcheck source=bin/lib/tailscale-resolve.sh disable=SC1091
     source "$DOTFILES_DIR/bin/lib/tailscale-resolve.sh"
-    if ts_bin="$(find_tailscale)" && [ "$(tailscale_exit_node "$ts_bin")" = none ]; then
-        status_msg "Engaging a Tailscale Mullvad exit node"
+    if ts_bin="$(find_tailscale)" && [ "$(tailscale_health "$ts_bin")" = ok ] &&
+        [ "$(tailscale_exit_node "$ts_bin")" = none ]; then
+        status_msg "Engaging an automatic Tailscale exit node"
         "$ts_bin" set --exit-node=auto:any --exit-node-allow-lan-access=true ||
             status_msg "WARN: could not set an exit node (is this device granted Mullvad in the Tailscale admin console?)"
     fi

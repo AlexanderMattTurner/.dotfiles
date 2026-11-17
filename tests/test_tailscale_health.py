@@ -66,6 +66,7 @@ def _run_lib(tmp_path: Path, func: str, stdout: str = "", rc: int = 0) -> str:
         (ACTIVE, 0, "ok"),
         ("Tailscale is stopped.", 1, "stopped"),
         (NO_DAEMON, 1, "no-daemon"),
+        ("The Tailscale CLI failed to start: Failed to load preferences.", 1, "no-daemon"),
         (EPERM, 1, "eperm"),
         (LOGGED_OUT, 1, "logged-out"),
         ("Logged out.", 1, "logged-out"),

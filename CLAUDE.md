@@ -370,11 +370,16 @@ the standalone Tailscale.app** (cask `tailscale-app`, a Network
 Extension). The same app is the tailnet (ssh to `mac-mini` and friends).
 Its CLI is `/Applications/Tailscale.app/Contents/MacOS/Tailscale` (the
 `tailscale` fish abbr). The home router also runs Mullvad; doctor cannot
-see that layer. The Mullvad desktop app is installed but unmanaged.
+see that layer. The dotfiles no longer install or check the Mullvad
+desktop app.
 
 - `setup.bash` runs `tailscale set --exit-node=auto:any
-  --exit-node-allow-lan-access=true` only when no exit node is engaged.
-  LAN access keeps the router and LAN devices reachable.
+  --exit-node-allow-lan-access=true` only when the app is connected and
+  no exit node is engaged. `auto:any` picks among every exit node this
+  device may use: the Mullvad relays, while no tailnet peer advertises
+  one. LAN access keeps the router and LAN devices reachable. Setup also
+  uninstalls the Homebrew `tailscale` formula, whose CLI would shadow
+  the app's on PATH.
 - `tailscale_exit_node` in `bin/lib/tailscale-resolve.sh` is the single
   classifier (`mullvad:<node>` / `other:<node>` / `none` /
   `unreachable`). `tailscale_health` classifies the app itself (`ok` /

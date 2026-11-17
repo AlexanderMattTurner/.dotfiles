@@ -27,7 +27,7 @@ tailscale_health() {
     out="$("$1" status 2>&1)" || rc=$?
     case "$out" in
     *"operation not permitted"*) echo eperm ;;
-    *"failed to connect"*) echo no-daemon ;;
+    *"failed to connect"* | *"CLI failed to start"*) echo no-daemon ;;
     *"Logged out"* | *"unexpected state: NoState"* | *NeedsLogin* | *"Log in at"*) echo logged-out ;;
     *"Tailscale is stopped"*) echo stopped ;;
     *) [ "$rc" -eq 0 ] && echo ok || echo error ;;

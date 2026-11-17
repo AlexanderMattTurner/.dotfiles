@@ -523,6 +523,9 @@ if $IS_MAC; then
     else
         pass "homebrew.mxcl.tailscale absent"
     fi
+    if command -v brew >/dev/null 2>&1 && [[ -d "$(brew --prefix)/opt/tailscale" ]]; then
+        fail "Homebrew tailscale formula" "its CLI shadows Tailscale.app's on PATH — run setup.bash"
+    fi
 
     # ── VPN ─────────────────────────────────────────────────────────────────
     # Egress is a Mullvad exit node run by Tailscale.app, which is also the
@@ -539,7 +542,7 @@ if $IS_MAC; then
             set_exit="$ts set --exit-node=auto:any --exit-node-allow-lan-access=true"
             case "$exit_node" in
             mullvad:*) pass "Mullvad exit node ${exit_node#mullvad:}" ;;
-            other:*) fail "Tailscale exit node" "${exit_node#other:} is not a Mullvad relay (run: $set_exit)" ;;
+            other:*) fail "Tailscale exit node" "${exit_node#other:} is not a Mullvad relay (pick one from \`$ts exit-node list\` and run: $ts set --exit-node=<relay>)" ;;
             none) fail "Tailscale exit node" "none engaged — traffic is in the clear (run: $set_exit; on 'no exit nodes found', grant this device Mullvad in the admin console)" ;;
             *) fail "Tailscale exit node" "cannot read the state (run: $ts status)" ;;
             esac
