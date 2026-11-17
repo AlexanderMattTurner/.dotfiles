@@ -492,14 +492,19 @@ fi
 # ── macOS launchd agents ────────────────────────────────────────────────────
 if $IS_MAC; then
     section "launchd agents"
-    # setup.bash evicts the retired exit-node login agent on every run; if it
-    # is back, something re-rendered it and the next login re-engages the
-    # exit node whose teardown deletes the default route (CLAUDE.md "VPN").
+    # setup.bash evicts these retired VPN artifacts on every run; one that is
+    # back means something re-rendered it (CLAUDE.md "VPN").
     TS_EXIT_PLIST="$HOME/Library/LaunchAgents/com.turntrout.tailscale-exit-node.plist"
     if [[ -e "$TS_EXIT_PLIST" || -L "$TS_EXIT_PLIST" ]]; then
         fail "retired tailscale-exit-node agent" "$TS_EXIT_PLIST still installed (run setup.bash)"
     else
         pass "retired tailscale-exit-node agent absent"
+    fi
+    RETIRED_TAILSCALED_PLIST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
+    if [[ -e "$RETIRED_TAILSCALED_PLIST" ]]; then
+        fail "retired com.$USER.tailscaled daemon" "fights Tailscale.app — run: sudo launchctl bootout system/com.$USER.tailscaled; sudo rm $RETIRED_TAILSCALED_PLIST"
+    else
+        pass "retired com.$USER.tailscaled daemon absent"
     fi
 
     # brew-autoupdate's background job sudos via this NOPASSWD fragment
@@ -514,111 +519,43 @@ if $IS_MAC; then
 
     HOMEBREW_TAILSCALED_PLIST="/Library/LaunchDaemons/homebrew.mxcl.tailscale.plist"
     if [[ -f "$HOMEBREW_TAILSCALED_PLIST" ]]; then
-        fail "homebrew.mxcl.tailscale present" "conflicts with com.$USER.tailscaled; run setup.bash"
+        fail "homebrew.mxcl.tailscale present" "fights Tailscale.app — run setup.bash"
     else
         pass "homebrew.mxcl.tailscale absent"
     fi
 
-    TAILSCALE_PLIST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
-    if [[ -f "$TAILSCALE_PLIST" ]]; then
-        pass "Tailscale daemon plist installed"
-    elif command -v tailscale >/dev/null 2>&1; then
-        fail "Tailscale daemon plist" "missing at $TAILSCALE_PLIST (run setup.bash)"
-    else
-        skip "Tailscale daemon" "tailscale CLI not installed"
-    fi
+    # ── VPN ─────────────────────────────────────────────────────────────────
+    # Egress is a Mullvad exit node run by Tailscale.app, which is also the
+    # tailnet. See CLAUDE.md "VPN".
+    section "VPN"
 
     # shellcheck source=lib/tailscale-resolve.sh disable=SC1091
     source "$DOTFILES_DIR/bin/lib/tailscale-resolve.sh"
     if ts="$(find_tailscale)"; then
-        pass "tailscale CLI ($ts)"
-    else
-        fail "tailscale CLI" "no working binary (brew install tailscale)"
-    fi
-
-    if [[ -n "$ts" && -f "$TAILSCALE_PLIST" ]]; then
         case "$(tailscale_health "$ts")" in
-        ok | stopped)
-            pass "Tailscale daemon reachable"
-            # Skewed CLI↔daemon (brew upgrade without daemon restart).
-            if skew="$(tailscale_version_skew "$ts")"; then
-                pass "Tailscale CLI/daemon versions match"
-            else
-                fail "Tailscale version skew" "$skew — run: sudo launchctl kickstart -k system/com.$USER.tailscaled"
-            fi
-            # Egress is the Mullvad app. An engaged Tailscale exit node is a
-            # loaded gun: clearing it makes this tailscaled delete the
-            # physical default route (CLAUDE.md "VPN"), so flag it before
-            # anyone clicks "Disconnect". Clearing it needs a Wi-Fi bounce to
-            # get the DHCP default route back, hence the two-step remedy.
-            if tailscale_exit_node_engaged "$ts"; then
-                # Clearing deletes the DHCP default route; re-running DHCP is
-                # what brings it back. A Wi-Fi power-cycle does that without
-                # sudo; on a wired Mac fall back to ipconfig.
-                wifi_if="$(networksetup -listallhardwareports 2>/dev/null |
-                    awk '/^Hardware Port: Wi-Fi/ {getline; print $2}')"
-                if [[ -n "$wifi_if" ]]; then
-                    route_fix="networksetup -setairportpower $wifi_if off && networksetup -setairportpower $wifi_if on"
-                else
-                    route_fix="sudo ipconfig set <primary-interface> DHCP"
-                fi
-                fail "Tailscale exit node engaged" "egress belongs to the Mullvad app — run: $ts set --exit-node= && $route_fix"
-            else
-                pass "Tailscale exit node off"
-            fi
+        ok)
+            pass "Tailscale connected"
+            exit_node="$(tailscale_exit_node "$ts")"
+            set_exit="$ts set --exit-node=auto:any --exit-node-allow-lan-access=true"
+            case "$exit_node" in
+            mullvad:*) pass "Mullvad exit node ${exit_node#mullvad:}" ;;
+            other:*) fail "Tailscale exit node" "${exit_node#other:} is not a Mullvad relay (run: $set_exit)" ;;
+            none) fail "Tailscale exit node" "none engaged — traffic is in the clear (run: $set_exit; on 'no exit nodes found', grant this device Mullvad in the admin console)" ;;
+            *) fail "Tailscale exit node" "cannot read the state (run: $ts status)" ;;
+            esac
             ;;
-        eperm)
-            fail "Tailscale daemon" "CLI denied access to socket (run: sudo launchctl kickstart -k system/com.$USER.tailscaled)"
-            ;;
-        no-daemon)
-            fail "Tailscale daemon" "daemon not running (run: sudo launchctl bootstrap system $TAILSCALE_PLIST)"
-            ;;
-        logged-out)
-            # Logged out is NOT healthy: the tailnet (ssh to mac-mini) is gone
-            # and `tailscale` commands fail with misleading errors until re-auth.
-            fail "Tailscale login" "daemon up but logged out (run: tailscale up)"
-            ;;
-        *)
-            fail "Tailscale daemon" "unrecognized 'tailscale status' failure (run: tailscale status)"
-            ;;
+        stopped) fail "Tailscale" "stopped — traffic is in the clear (run: $ts up)" ;;
+        no-daemon) fail "Tailscale" "app backend not running (run: open -a Tailscale)" ;;
+        eperm) fail "Tailscale" "CLI denied access to the backend (quit and reopen Tailscale.app)" ;;
+        logged-out) fail "Tailscale login" "logged out (run: $ts up)" ;;
+        *) fail "Tailscale" "unrecognized 'tailscale status' failure (run: $ts status)" ;;
         esac
+    else
+        skip "Tailscale" "Tailscale.app not installed (brew install --cask tailscale-app)"
     fi
     SHIM=/usr/local/bin/tailscale
     if [[ -e "$SHIM" ]] && ! "$SHIM" version >/dev/null 2>&1; then
-        fail "tailscale shim" "$SHIM is broken (App Store Tailscale uninstalled) — sudo rm $SHIM"
-    fi
-
-    # ── VPN ─────────────────────────────────────────────────────────────────
-    # The Mullvad app is the egress VPN; Tailscale is the tailnet only. The
-    # invariant that matters at login is auto-connect: without it the machine
-    # boots in the clear until someone opens the app. See CLAUDE.md "VPN".
-    section "VPN"
-
-    # shellcheck source=lib/mullvad.sh disable=SC1091
-    source "$DOTFILES_DIR/bin/lib/mullvad.sh"
-    if mullvad_cli="$(find_mullvad)"; then
-        pass "Mullvad CLI ($mullvad_cli)"
-        case "$(mullvad_autoconnect "$mullvad_cli")" in
-        on) pass "Mullvad auto-connect on" ;;
-        off) fail "Mullvad auto-connect" "off — machine boots in the clear (run: \"$mullvad_cli\" auto-connect set on)" ;;
-        *) fail "Mullvad daemon" "CLI cannot reach the daemon — open Mullvad VPN.app and check its status" ;;
-        esac
-        case "$(mullvad_tunnel "$mullvad_cli")" in
-        connected) pass "Mullvad tunnel connected" ;;
-        disconnected) fail "Mullvad tunnel" "not connected — traffic is in the clear (run: \"$mullvad_cli\" connect)" ;;
-        *) ;; # already reported by the auto-connect arm
-        esac
-        for split_app in "${MULLVAD_SPLIT_APPS[@]}"; do
-            [ -d "$split_app" ] || continue
-            case "$(mullvad_split_tunnel "$mullvad_cli" "$split_app")" in
-            excluded) pass "Mullvad split tunnel excludes $(basename "$split_app")" ;;
-            not-excluded) fail "Mullvad split tunnel" "$split_app goes through the VPN (run: \"$mullvad_cli\" split-tunnel app add \"$split_app\")" ;;
-            off) fail "Mullvad split tunnel" "off, so $split_app goes through the VPN (run: \"$mullvad_cli\" split-tunnel set on)" ;;
-            *) fail "Mullvad split tunnel" "cannot read the state for $split_app (run: \"$mullvad_cli\" split-tunnel get)" ;;
-            esac
-        done
-    else
-        skip "Mullvad VPN" "Mullvad VPN.app not installed (brew install --cask mullvad-vpn)"
+        fail "tailscale shim" "$SHIM is broken (Tailscale.app removed) — sudo rm $SHIM"
     fi
 
     # ── Backups ─────────────────────────────────────────────────────────────

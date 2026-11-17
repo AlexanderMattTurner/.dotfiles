@@ -56,7 +56,6 @@ if OS.mac?
   brew "libusb"
   brew "pkg-config"
   brew "go"
-  brew "tailscale"
   brew "duti"
   brew "git"
   brew "colima"
@@ -93,7 +92,7 @@ if OS.mac?
   cask "duplicati"
   cask "ente"
   cask "lookaway"
-  cask "mullvad-vpn"
+  cask "tailscale-app"   # egress VPN: Mullvad exit node (CLAUDE.md "VPN")
 else 
   brew "xclip"
 end

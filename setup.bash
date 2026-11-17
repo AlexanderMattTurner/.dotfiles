@@ -70,14 +70,14 @@ done < <(repo_hook_symlinks)
 # prompt — which can't run on the --link-only path.
 bash "$DOTFILES_DIR/bin/lib/stale-symlinks.sh" --prune
 
-# Retired artifacts of the Tailscale exit-node stack (egress is the Mullvad
-# app now; clearing a Tailscale exit node deletes the default route, see
-# CLAUDE.md "VPN"). Both lived only on machines set up before that change,
-# and neither is reachable by the generic reconcile above: the SwiftBar link
-# was the sole managed entry under ~/.config/swiftbar, so the stale-symlink
-# scan no longer visits that directory; and the login agent is a rendered
-# file, not a symlink. Runs before the --link-only return because that is
-# the documented update path for an existing Mac. No-op once both are gone.
+# Retired artifacts of earlier VPN setups (egress is now a Tailscale.app
+# Mullvad exit node, see CLAUDE.md "VPN"). They live only on machines set up
+# before that change, and the generic reconcile above reaches none of them:
+# the SwiftBar link was the sole managed entry under ~/.config/swiftbar, so
+# the stale-symlink scan no longer visits that directory; the login agent and
+# the Homebrew tailscaled LaunchDaemon are rendered files, not symlinks. Runs
+# before the --link-only return because that is the documented update path
+# for an existing Mac. No-op once all are gone.
 if [ "$(uname)" = "Darwin" ]; then
     RETIRED_SWIFTBAR_LINK="$HOME/.config/swiftbar/vpn.10s.bash"
     if [ -L "$RETIRED_SWIFTBAR_LINK" ] &&
@@ -94,6 +94,13 @@ if [ "$(uname)" = "Darwin" ]; then
         rm -f "$TS_EXIT_PLIST_DEST"
     fi
     rm -rf "$HOME/Library/Logs/com.turntrout.tailscale-exit-node"
+    # Its tailscaled would fight Tailscale.app for the tunnel.
+    RETIRED_TAILSCALED_PLIST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
+    if [ -e "$RETIRED_TAILSCALED_PLIST" ]; then
+        status_msg "Removing retired com.$USER.tailscaled launch daemon"
+        sudo launchctl bootout "system/com.$USER.tailscaled" 2>/dev/null || true
+        sudo rm -f "$RETIRED_TAILSCALED_PLIST"
+    fi
 fi
 
 [[ -f "$HOME/.extras.bash" ]] || touch "$HOME/.extras.bash"
@@ -217,7 +224,7 @@ if [ "$(uname)" = "Darwin" ]; then
     status_msg "Configuring macOS packages..."
 
     # Escape $USER for literal sed replacement (guards against `/` and `&` in
-    # unusual usernames). Used for both the sudoers and Tailscale templates.
+    # unusual usernames). Used for the sudoers and launch agent templates.
     ESCAPED_USER="$(printf '%s' "$USER" | sed 's/[\/&]/\\&/g')"
 
     # Aerospace window manager setup (requires custom tap)
@@ -233,9 +240,9 @@ if [ "$(uname)" = "Darwin" ]; then
         SUDOERS_RENDERED="$(mktemp)"
         trap 'rm -f "$SUDOERS_RENDERED"' EXIT
         sed "s/__USERNAME__/$ESCAPED_USER/g" "$SUDOERS_TEMPLATE" >"$SUDOERS_RENDERED"
-        # Compare content, not just existence (same pattern as the tailscale
-        # plists below): an existence-only guard means a later template edit
-        # never reaches already-provisioned machines. The fragment is
+        # Compare content, not just existence (same pattern as the
+        # disk-hygiene plist below): an existence-only guard means a later
+        # template edit never reaches already-provisioned machines. The fragment is
         # root:wheel 0440, unreadable by a plain user, so the comparison
         # itself needs sudo — a bare `cmp` would fail with "Permission
         # denied" on every run and force a reinstall regardless of drift.
@@ -256,93 +263,43 @@ if [ "$(uname)" = "Darwin" ]; then
     retry 3 5 brew_quiet_install --cask orbstack ||
         status_msg "WARN: orbstack cask install failed after 3 attempts — rerun setup.bash to retry."
 
-    # Tailscale VPN daemon — `com.$USER.tailscaled` is the sole daemon; boot
-    # out homebrew's if present. Two daemons racing on /var/run/tailscaled.socket
-    # leaves stale provenance on the socket → CLI hits EPERM on connect.
-    TAILSCALE_PLIST_DEST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
-    TAILSCALE_PLIST_RENDERED="$(mktemp)"
-    trap 'rm -f "$TAILSCALE_PLIST_RENDERED"' EXIT
-    sed "s/__USERNAME__/$ESCAPED_USER/g" "$DOTFILES_DIR/launchagents/com.tailscaled.plist.template" \
-        >"$TAILSCALE_PLIST_RENDERED"
-    needs_bootstrap=false
-    if [ ! -f "$TAILSCALE_PLIST_DEST" ] || ! cmp -s "$TAILSCALE_PLIST_RENDERED" "$TAILSCALE_PLIST_DEST"; then
-        sudo install -o root -g wheel -m 0644 "$TAILSCALE_PLIST_RENDERED" "$TAILSCALE_PLIST_DEST"
-        needs_bootstrap=true
-    fi
-    rm -f "$TAILSCALE_PLIST_RENDERED"
-    trap - EXIT
-
+    # homebrew.mxcl.tailscale is the daemon `sudo brew services start
+    # tailscale` registers; it would fight Tailscale.app for the tunnel.
     HOMEBREW_TAILSCALED_PLIST="/Library/LaunchDaemons/homebrew.mxcl.tailscale.plist"
     if [ -f "$HOMEBREW_TAILSCALED_PLIST" ]; then
-        status_msg "Removing homebrew.mxcl.tailscale (conflicts with com.$USER.tailscaled)"
+        status_msg "Removing homebrew.mxcl.tailscale (conflicts with Tailscale.app)"
         if sudo launchctl print system/homebrew.mxcl.tailscale &>/dev/null; then
             sudo launchctl bootout system/homebrew.mxcl.tailscale
         fi
         sudo rm -f "$HOMEBREW_TAILSCALED_PLIST"
-        needs_bootstrap=true
     fi
 
-    # App-Store Tailscale leaves /usr/local/bin/tailscale as a root-owned shim
-    # pointing at /Applications/Tailscale.app/Contents/MacOS/tailscale. When
-    # the app is uninstalled, the shim survives and shadows brew tailscale on
-    # any Intel Mac (or any user with /usr/local/bin earlier in PATH).
+    # A removed Tailscale.app can leave /usr/local/bin/tailscale as a
+    # root-owned shim that exec's a missing binary.
     TAILSCALE_SHIM="/usr/local/bin/tailscale"
     if [ -e "$TAILSCALE_SHIM" ] && ! "$TAILSCALE_SHIM" version >/dev/null 2>&1; then
-        status_msg "Removing broken App-Store tailscale shim at $TAILSCALE_SHIM"
+        status_msg "Removing broken tailscale shim at $TAILSCALE_SHIM"
         sudo rm -f "$TAILSCALE_SHIM"
     fi
 
-    if $needs_bootstrap; then
-        if sudo launchctl print "system/com.$USER.tailscaled" &>/dev/null; then
-            sudo launchctl bootout "system/com.$USER.tailscaled"
-        fi
-        sudo launchctl bootstrap system "$TAILSCALE_PLIST_DEST"
-    fi
-    unset needs_bootstrap
-
-    # `brew upgrade tailscale` swaps the CLI binary but leaves the old
-    # tailscaled running under launchd. Kickstart the daemon so it respawns
-    # on the current binary. Idempotent: no-op when matched.
+    # Egress VPN: engage a Mullvad exit node when none is set. LAN access
+    # keeps the router and LAN devices reachable. Acts only on `none`, so a
+    # re-run is a no-op and a hand-picked exit node is left alone.
     # shellcheck source=bin/lib/tailscale-resolve.sh disable=SC1091
     source "$DOTFILES_DIR/bin/lib/tailscale-resolve.sh"
-    if ts_bin="$(find_tailscale)"; then
-        skew_msg="$(tailscale_version_skew "$ts_bin")" && skew_rc=0 || skew_rc=$?
-        if [ "$skew_rc" -ne 0 ]; then
-            status_msg "Tailscale CLI/daemon skew ($skew_msg); kickstarting daemon"
-            sudo launchctl kickstart -k "system/com.$USER.tailscaled"
-        fi
+    if ts_bin="$(find_tailscale)" && [ "$(tailscale_exit_node "$ts_bin")" = none ]; then
+        status_msg "Engaging a Tailscale Mullvad exit node"
+        "$ts_bin" set --exit-node=auto:any --exit-node-allow-lan-access=true ||
+            status_msg "WARN: could not set an exit node (is this device granted Mullvad in the Tailscale admin console?)"
     fi
-    unset ts_bin skew_msg skew_rc
-
-    # Mullvad split tunnel: apps in MULLVAD_SPLIT_APPS bypass the VPN (Anki
-    # sync fails on Mullvad exit IPs). Idempotent: acts only on a missing app.
-    # shellcheck source=bin/lib/mullvad.sh disable=SC1091
-    source "$DOTFILES_DIR/bin/lib/mullvad.sh"
-    if mullvad_cli="$(find_mullvad)"; then
-        for split_app in "${MULLVAD_SPLIT_APPS[@]}"; do
-            [ -d "$split_app" ] || continue
-            split_state="$(mullvad_split_tunnel "$mullvad_cli" "$split_app")"
-            if [ "$split_state" = off ]; then
-                "$mullvad_cli" split-tunnel set on >/dev/null || true
-                split_state="$(mullvad_split_tunnel "$mullvad_cli" "$split_app")"
-            fi
-            if [ "$split_state" = not-excluded ]; then
-                status_msg "Excluding $split_app from the Mullvad tunnel"
-                "$mullvad_cli" split-tunnel app add "$split_app" >/dev/null || true
-                split_state="$(mullvad_split_tunnel "$mullvad_cli" "$split_app")"
-            fi
-            [ "$split_state" = excluded ] ||
-                status_msg "WARN: could not exclude $split_app from Mullvad ($split_state)"
-        done
-    fi
-    unset mullvad_cli split_app split_state
+    unset ts_bin
 
     # No Claude or Tailscale login agent is installed here, by design:
     #   - the ccr agent belonged to the retired claude-guard checkout; ccr and
     #     its wrappers are gone, and glovebox supervises its own processes;
-    #   - the tailscale-exit-node applier is retired upstream — egress is the
-    #     Mullvad app now, its plist template is deleted, and the eviction
-    #     block near the top of this script actively removes any leftover.
+    #   - the tailscale-exit-node applier is retired — Tailscale.app keeps the
+    #     exit node itself, and the eviction block near the top of this
+    #     script removes any leftover.
     # Installing either here would fight that eviction on every run.
     mkdir -p "$HOME/Library/LaunchAgents"
 
@@ -378,7 +335,7 @@ if [ "$(uname)" = "Darwin" ]; then
     # worktree reap (bin/disk-hygiene.bash). See CLAUDE.md "Disk space" —
     # this machine hit 99% full silently on 2026-10-04, so the owner decided
     # doctor should no longer just name these prunes, it should run them.
-    # Rendered like the tailscaled plist (per-user paths), not safe_link'd.
+    # Rendered from a template (per-user paths), not safe_link'd.
     DISK_HYGIENE_PLIST_DEST="$HOME/Library/LaunchAgents/com.$USER.disk-hygiene.plist"
     DISK_HYGIENE_PLIST_RENDERED="$(mktemp)"
     trap 'rm -f "$DISK_HYGIENE_PLIST_RENDERED"' EXIT

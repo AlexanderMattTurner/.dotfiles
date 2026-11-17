@@ -97,28 +97,6 @@ if $IS_MAC; then
         esac
     fi
 
-    TAILSCALED_PLIST="/Library/LaunchDaemons/com.$USER.tailscaled.plist"
-    if [[ -f "$TAILSCALED_PLIST" ]]; then
-        if $ASSUME_YES; then
-            choice=y
-        else
-            read -rp "Unload + remove tailscaled launch daemon? (requires sudo) (y/N) " choice
-        fi
-        case "$choice" in
-        y | Y)
-            if sudo launchctl print "system/com.$USER.tailscaled" &>/dev/null; then
-                sudo launchctl bootout "system/com.$USER.tailscaled"
-            fi
-            if sudo rm -f "$TAILSCALED_PLIST"; then
-                echo "  removed tailscaled launch daemon"
-            else
-                echo "  FAILED to remove $TAILSCALED_PLIST"
-            fi
-            ;;
-        *) echo "  skip tailscaled launch daemon" ;;
-        esac
-    fi
-
     # NOPASSWD sudoers fragment installed by setup.bash for brew-autoupdate.
     # Leaving it behind would grant passwordless brew-as-root forever, so
     # offer to remove it on uninstall.

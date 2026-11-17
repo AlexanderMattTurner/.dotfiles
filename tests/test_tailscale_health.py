@@ -1,9 +1,8 @@
-"""bin/lib/tailscale-resolve.sh — tailscale_health classification and friends.
+"""bin/lib/tailscale-resolve.sh — Tailscale.app health and exit-node classifiers.
 
-Drives the lib with a stubbed `tailscale` binary so the matrix of daemon
-failure modes (socket EPERM, daemon down, logged out, ...) is exercised
-without a real tailscaled. The states must track the consumers listed in
-the tailscale_health comment (doctor).
+Drives the lib with a stubbed `tailscale` binary so every state is exercised
+without a real Tailscale.app. The states must track the consumers listed in
+each classifier's comment (setup.bash, doctor).
 """
 
 import stat
@@ -79,156 +78,83 @@ def test_health_classification(
     assert _run_lib(tmp_path, "tailscale_health", stdout, rc) == expected
 
 
-def _skew(
-    tmp_path: Path, client: str, daemon: str | None
-) -> subprocess.CompletedProcess[str]:
-    """Stub a tailscale CLI whose `version` and `status --json` disagree, run the check.
-
-    `daemon=None` omits the Version line so `status --json` looks unparseable
-    (the skew check must stay silent rather than false-alarm).
-    """
-    status_json = f'  "Version": "{daemon}-tdeadbeef",' if daemon is not None else ""
-    stub = tmp_path / "tailscale"
-    stub.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = version ]; then\n'
-        f"  echo {client}\n"
-        'elif [ "$1" = status ]; then\n'
-        f"  cat <<'TS_EOF'\n{status_json}\nTS_EOF\n"
-        "fi\n"
-    )
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
-    return subprocess.run(
-        [
-            "bash",
-            "-c",
-            f'source "{RESOLVE_SH}" && tailscale_version_skew "$1"',
-            "_",
-            str(stub),
-        ],
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-        timeout=5,
+def _peer(dns: str, exit_node: bool) -> str:
+    """One abridged peer object from real Tailscale.app `status --json` output."""
+    return (
+        f'    "{dns}": {{\n'
+        f'      "HostName": "{dns.split(".")[0]}",\n'
+        f'      "DNSName": "{dns}.",\n'
+        '      "Online": true,\n'
+        f'      "ExitNode": {"true" if exit_node else "false"},\n'
+        '      "ExitNodeOption": true\n'
+        "    },\n"
     )
 
 
-def test_version_skew_detected(tmp_path: Path) -> None:
-    proc = _skew(tmp_path, "1.98.8", "1.98.5")
-    assert proc.returncode == 1
-    assert "client=1.98.8" in proc.stdout
-    assert "daemon=1.98.5" in proc.stdout
-
-
-def test_version_skew_match_is_silent(tmp_path: Path) -> None:
-    proc = _skew(tmp_path, "1.98.8", "1.98.8")
-    assert proc.returncode == 0
-    assert proc.stdout.strip() == ""
-
-
-def test_version_skew_unreadable_daemon_is_silent(tmp_path: Path) -> None:
-    # A daemon we can't probe must not be reported as skew (EPERM/boot
-    # transients must not false-alarm doctor).
-    proc = _skew(tmp_path, "1.98.8", None)
-    assert proc.returncode == 0
-    assert proc.stdout.strip() == ""
-
-
-def _exit_node(tmp_path: Path, prefs_json: str | None) -> bool:
-    """Run tailscale_exit_node_engaged against a stub serving `debug prefs`.
-
-    `prefs_json=None` makes the stub fail outright (daemon down): the check
-    must read that as "off", since the health check already covers it.
-    """
-    stub = tmp_path / "tailscale"
-    if prefs_json is None:
-        stub.write_text("#!/bin/sh\nexit 1\n")
-    else:
-        stub.write_text(
-            "#!/bin/sh\n"
-            'if [ "$1 $2" = "debug prefs" ]; then\n'
-            f"  cat <<'TS_EOF'\n{prefs_json}\nTS_EOF\n"
-            "  exit 0\n"
-            "fi\n"
-            "exit 3\n"
-        )
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
-    proc = subprocess.run(
-        [
-            "bash",
-            "-c",
-            f'source "{RESOLVE_SH}" && tailscale_exit_node_engaged "$1"',
-            "_",
-            str(stub),
-        ],
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-        timeout=5,
-    )
-    # A verdict is exit 0 or 1 with no noise; 127 (function missing) or a
-    # sourcing error must not pass for "off".
-    assert proc.returncode in (0, 1), proc.stderr
-    assert proc.stderr == ""
-    return proc.returncode == 0
-
-
-def _prefs(exit_id: str, exit_ip: str) -> str:
-    """Abridged real `tailscale debug prefs` with the two exit-node fields."""
+def _status_json(*peers: str) -> str:
     return (
         "{\n"
-        '  "ControlURL": "https://controlplane.tailscale.com",\n'
-        '  "CorpDNS": true,\n'
-        f'  "ExitNodeID": "{exit_id}",\n'
-        f'  "ExitNodeIP": "{exit_ip}",\n'
-        '  "ExitNodeAllowLANAccess": true\n'
-        "}"
+        '  "BackendState": "Running",\n'
+        '  "Self": {\n'
+        '    "DNSName": "macbook-pro-81.tailnet.ts.net.",\n'
+        '    "ExitNode": false,\n'
+        '    "ExitNodeOption": false\n'
+        "  },\n"
+        '  "Peer": {\n' + "".join(peers) + "  }\n}"
     )
 
 
 @pytest.mark.parametrize(
-    "prefs_json,engaged",
+    "stdout,rc,expected",
     [
-        (_prefs("n29MTCT3iQ11CNTRL", ""), True),
-        (_prefs("", "100.117.167.110"), True),
-        (_prefs("", ""), False),
-        (None, False),
+        (
+            _status_json(
+                _peer("us-lax-wg-402.mullvad.ts.net", False),
+                _peer("us-sjc-wg-508.mullvad.ts.net", True),
+            ),
+            0,
+            "mullvad:us-sjc-wg-508.mullvad.ts.net",
+        ),
+        (
+            _status_json(
+                _peer("us-lax-wg-402.mullvad.ts.net", False),
+                _peer("mac-mini.tailnet.ts.net", True),
+            ),
+            0,
+            "other:mac-mini.tailnet.ts.net",
+        ),
+        (_status_json(_peer("us-lax-wg-402.mullvad.ts.net", False)), 0, "none"),
+        (_status_json(), 0, "none"),
+        ("The Tailscale CLI failed to start: Failed to load preferences.", 1, "unreachable"),
     ],
 )
-def test_exit_node_engaged(
-    tmp_path: Path, prefs_json: str | None, engaged: bool
+def test_exit_node_classification(
+    tmp_path: Path, stdout: str, rc: int, expected: str
 ) -> None:
-    assert _exit_node(tmp_path, prefs_json) is engaged
+    assert _run_lib(tmp_path, "tailscale_exit_node", stdout, rc) == expected
 
 
-@pytest.mark.parametrize(
-    "body,key,expected",
-    [
-        ('  "Version": "1.102.4-tbbcd7d1fc",', "Version", "1.102.4-tbbcd7d1fc"),
-        ('  "ExitNodeID": null,', "ExitNodeID", ""),
-        ('  "Other": "x"', "ExitNodeID", ""),
-        ('  "K": "first",\n  "K": "second"', "K", "first"),
-        ('  "Last": "no-comma"', "Last", "no-comma"),
-    ],
-)
-def test_json_value(tmp_path: Path, body: str, key: str, expected: str) -> None:
-    """The line-oriented JSON reader both skew and exit-node checks rely on."""
-    stub = tmp_path / "tailscale"
-    stub.write_text(f"#!/bin/sh\ncat <<'TS_EOF'\n{{\n{body}\n}}\nTS_EOF\n")
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
-    proc = subprocess.run(
-        [
-            "bash",
-            "-c",
-            f'source "{RESOLVE_SH}" && _tailscale_json_value "$1" "$2" status --json',
-            "_",
-            key,
-            str(stub),
-        ],
+def _find(cli: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", f'source "{RESOLVE_SH}" && find_tailscale'],
+        env={"PATH": "/usr/bin:/bin", "TAILSCALE_CLI": str(cli)},
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
         timeout=5,
     )
-    assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == expected
+
+
+def test_find_tailscale_reports_the_app_cli(tmp_path: Path) -> None:
+    stub = tmp_path / "tailscale"
+    stub.write_text("#!/bin/sh\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    proc = _find(stub)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == str(stub)
+
+
+def test_find_tailscale_fails_without_the_app(tmp_path: Path) -> None:
+    proc = _find(tmp_path / "missing")
+    assert proc.returncode != 0
+    assert proc.stdout == ""
