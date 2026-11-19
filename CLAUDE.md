@@ -265,7 +265,7 @@ status --porcelain` empty), its `HEAD` is contained in a remote-tracking
 branch, and it is untouched for 7+ days — then alerts via `osascript` on
 `low`/`critical` free space. A weekly LaunchAgent
 (`launchagents/com.disk-hygiene.plist.template`, rendered by `setup.bash`
-like the tailscaled plist since its paths are per-user) runs it; `dotfiles
+because its paths are per-user) runs it; `dotfiles
 disk-hygiene --dry-run` runs it by hand. `limactl prune` here clears only
 unreferenced cache/template data, never an instance — the VM-is-not-garbage
 rule above still holds. `glovebox gc --schedule install` is a separate,
@@ -365,112 +365,61 @@ up?" could only be answered by opening the web UI.
 
 ### VPN
 
-**The Mullvad app is the egress VPN. Tailscale is the tailnet only —
-ssh to `mac-mini` and friends — and is never used as an exit node.**
-`mullvad auto-connect` is on, so the machine is behind the VPN from
-login with no click; Tailscale's own traffic simply rides through the
-Mullvad tunnel. `doctor.bash` FAILs if auto-connect is off, if the
-tunnel is not connected right now, or if a Tailscale exit node is
-engaged. The `mullvad` fish function is a thin
-wrapper over the app-bundled CLI (`bin/lib/mullvad.sh` is the bash-side
-resolver of the same path).
+**Egress is a Mullvad exit node from Tailscale's Mullvad add-on, run by
+the standalone Tailscale.app** (cask `tailscale-app`, a Network
+Extension). The same app is the tailnet (ssh to `mac-mini` and friends).
+Its CLI is `/Applications/Tailscale.app/Contents/MacOS/Tailscale` (the
+`tailscale` fish abbr). The home router also runs Mullvad; doctor cannot
+see that layer. The dotfiles no longer install or check the Mullvad
+desktop app.
 
-**An app that a service blocks on Mullvad IPs gets split-tunneled, not an
-exit node.** AnkiWeb refuses Mullvad exit IPs, so Anki sync failed unless
-the Mullvad app was disabled. `MULLVAD_SPLIT_APPS` in `bin/lib/mullvad.sh` lists
-apps that bypass the tunnel; `setup.bash` adds each installed one and
-`doctor.bash` FAILs if one is missing. Only that app's traffic leaves in
-the clear. Routing through a Tailscale exit node instead would hit the
-route-deletion bug below.
+- `setup.bash` runs `tailscale set --exit-node=auto:any
+  --exit-node-allow-lan-access=true` only when the app is connected and
+  no exit node is engaged. `auto:any` picks among every exit node this
+  device may use: the Mullvad relays, while no tailnet peer advertises
+  one. LAN access keeps the router and LAN devices reachable. Setup also
+  uninstalls the Homebrew `tailscale` formula, whose CLI would shadow
+  the app's on PATH.
+- `tailscale_exit_node` in `bin/lib/tailscale-resolve.sh` is the single
+  classifier (`mullvad:<node>` / `other:<node>` / `none` /
+  `unreachable`). `tailscale_health` classifies the app itself (`ok` /
+  `stopped` / `no-daemon` / `eperm` / `logged-out` / `error`).
+  `doctor.bash` FAILs on every state but `ok` + `mullvad:*`, and SKIPs
+  when Tailscale.app is absent. Adding a state = classifier + doctor arm
+  + case in `tests/test_tailscale_health.py`.
+- The add-on is granted **per device**. Installing Tailscale.app created
+  a new node (`macbook-pro-81`; the Homebrew node was `macbook-pro-108`).
+  It saw "no exit nodes found" until it was added under admin console →
+  Settings → Mullvad VPN. The ACL was default allow-all, so it was not
+  the cause.
+- Right after an exit node is engaged, TCP connects time out for a few
+  seconds while the tunnel handshakes. About 10 s later,
+  am.i.mullvad.net reported the relay with a direct path. Do not read
+  that window as a broken tunnel.
+- No split tunnel exists. AnkiWeb does not block Mullvad IPs: through a
+  relay, ankiweb.net returned 200 and sync.ankiweb.net answered (405 to a
+  GET). The earlier Anki split-tunnel change (#185) rested on a false
+  premise and is deleted.
 
-The reason is a verified bug, not a preference. The Homebrew
-`tailscaled` uses Tailscale's generic BSD userspace router, and on
-macOS that router mishandles the `0.0.0.0/0` route an exit node needs.
-On `tailscale set --exit-node=<node>` it runs `route add -inet
-0.0.0.0/0 -iface utun0`, which macOS rejects because `en0` already owns
-`default`; the error is hidden by `-q`. On `tailscale set --exit-node=`
-it runs `route delete -inet 0.0.0.0/0 -iface utun0`, and macOS
-`route(8)` matches a delete by destination only, so it deletes the
-**physical Wi-Fi default route**. Captured on 2026-09-19 with `route -n
-monitor` during a disconnect:
+**Why the app and not Homebrew `tailscaled`.** The Homebrew build uses
+Tailscale's generic BSD userspace router. On macOS, clearing an exit
+node there runs `route delete -inet 0.0.0.0/0 -iface utun0`, and
+`route(8)` matches by destination only, so it deletes the physical Wi-Fi
+default route; only a Wi-Fi bounce restores it (tailscale/tailscale#21395).
+Tailscale.app does not have this bug: on this Mac, engaging an exit node
+moved `default` to `utun0`, clearing it returned `default` to `en0`, and
+traffic kept flowing (example.com answered 200).
 
-```
-RTM_DELETE: Delete Route: pid: <tailscaled's route child>, errno 0,
-  flags:<GATEWAY,DONE,STATIC,PRCLONING,CONDEMNED,GLOBAL>
- default 192.168.8.1 default
-```
+### Retired Tailscale daemons
 
-After it, `route get 1.1.1.1` says "not in table", every dial fails with
-"network is unreachable", and `tailscaled` logs `Rebind; defIf=""`.
-Re-engaging the exit node makes it worse (the add now succeeds, so
-`default` lands on `utun0` with no underlying path to the exit node).
-Nothing re-adds the route until DHCP re-runs — hence only a Wi-Fi
-bounce or a reboot ever fixed it. Reported upstream as
-tailscale/tailscale#21395
-(https://github.com/tailscale/tailscale/issues/21395); until it is
-fixed the Homebrew build cannot safely clear an exit node on this OS.
-
-The DNS story (tailscaled pointing macOS at Mullvad's resolver
-`194.242.2.2` through `100.100.100.100`) is real but downstream of the
-route loss, which is why the previous DNS-only self-heal never fixed
-it. **Do not rebuild a disconnect self-heal around `tailscale set`**:
-the damage happens inside tailscaled's own `route delete`, below
-anything a wrapper script can sequence around.
-
-If an exit node is ever engaged again (the pref persists in
-`tailscaled`'s state across reboots), the one safe way to clear it is
-the doctor remedy: `tailscale set --exit-node=` immediately followed by
-a Wi-Fi power-cycle so DHCP restores the default route. Expect a few
-seconds offline.
-
-### Tailscale daemon
-
-`com.$USER.tailscaled` is the sole tailscaled LaunchDaemon. `setup.bash`
-boots out `homebrew.mxcl.tailscale` (the daemon homebrew installs when
-`brew install tailscale` or `sudo brew services start tailscale` is
-run) and removes its plist before bootstrapping ours. Two daemons
-racing on `/var/run/tailscaled.socket` leave the socket carrying
-provenance for whichever lost the race, after which the homebrew CLI
-hits `connect: operation not permitted` even though `tailscaled` is
-running. `doctor.bash` fails if `homebrew.mxcl.tailscale.plist` exists,
-if `tailscale status` returns a socket-reachability error, or if the
-daemon is logged out.
-
-The race recurs only when something re-registers homebrew's service —
-in practice `sudo brew services start tailscale` (plain `brew
-install`/`upgrade` don't resurrect a booted-out plist). Defenses, in
-order of when they fire: the `brew` fish wrapper in
-`apps/fish/config.fish` refuses the non-sudo `brew services
-start|run|restart|load tailscale` (the form brew makes you type before
-it tells you to add sudo); `setup.bash` re-evicts the plist on every
-run; and `doctor.bash` FAILs if it ever lands. The wrapper can't see
-`sudo brew …` (sudo runs brew as root, bypassing fish functions), so
-doctor is the real backstop, not the wrapper. We deliberately do *not*
-`brew pin tailscale`: it wouldn't stop the trigger and would freeze
-security updates on a VPN daemon.
-
-`setup.bash` also evicts the retired `com.turntrout.tailscale-exit-node`
-login agent (the applier that used to engage a Mullvad exit node at
-boot) and the retired SwiftBar `vpn.10s.bash` link from any machine
-still carrying them, on every run including `--link-only`; `doctor.bash`
-FAILs if the agent plist is back.
-
-A milder hazard: `brew upgrade tailscale` swaps the CLI binary but
-leaves the *old* `tailscaled` running (version skew).
-`tailscale_version_skew` in `bin/lib/tailscale-resolve.sh` compares
-`tailscale version` against the daemon's `status --json` Version;
-`setup.bash` kickstarts the daemon on skew (self-heals every run) and
-`doctor.bash` FAILs on it. It stays silent when either side is
-unreadable (EPERM/boot transients must not false-alarm). Tested in
-`tests/test_tailscale_health.py`.
-
-`tailscale_health` in `bin/lib/tailscale-resolve.sh` is the single
-classifier for CLI↔daemon health (`ok` / `stopped` / `no-daemon` /
-`eperm` / `logged-out` / `error`); `bin/doctor.bash` maps each unhealthy
-state to a FAIL with the exact recovery command, and logged-out is a
-FAIL, not "reachable" (the tailnet is gone until `tailscale up`).
-Adding a failure mode = new state in `tailscale_health` + a doctor arm +
-a case in `tests/test_tailscale_health.py`.
+The Homebrew `tailscaled` LaunchDaemon `com.$USER.tailscaled` is
+retired. A second tailscaled would fight Tailscale.app for the tunnel,
+as would `homebrew.mxcl.tailscale` (registered by `sudo brew services
+start tailscale`). `setup.bash` boots out and removes both plists on
+every run, and `doctor.bash` FAILs if either is back. `setup.bash` also
+evicts the retired `com.turntrout.tailscale-exit-node` login agent and
+SwiftBar `vpn.10s.bash` link, on every run including `--link-only`;
+doctor FAILs if the agent plist is back.
 
 ### tmux session restore
 
