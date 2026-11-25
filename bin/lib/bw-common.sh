@@ -81,12 +81,18 @@ bw_require_logged_in() {
     fi
 }
 
-# Ensure $BW_SESSION is exported, unlocking via the master password cached
-# in the OS secret store (service `bw-master-password`, see
-# bin/lib/secret-store.sh) if needed. Password is passed via env var to
-# `--passwordenv` — Node bw silently ignores `--passwordfile` and falls
-# back to an interactive prompt that crashes inquirer on piped stdin
-# ("readline was closed" on Node 20+). Env var scoped to the subprocess.
+# Ensure $BW_SESSION is exported, asking for the master password at the
+# terminal when the vault is locked. Nothing stores that password: a stored
+# copy is readable by every process running as the user (`security
+# find-generic-password -w` asks for nothing once the login Keychain is
+# unlocked), and beside the vault file bw keeps on disk it is the whole
+# vault. A caller with no terminal, or one that exported
+# BW_NONINTERACTIVE, fails instead of prompting.
+#
+# Password is passed via env var to `--passwordenv` — Node bw silently
+# ignores `--passwordfile` and falls back to an interactive prompt that
+# crashes inquirer on piped stdin ("readline was closed" on Node 20+). Env
+# var scoped to the subprocess.
 #
 # The session key must reach bw ONLY via the exported BW_SESSION env var,
 # never as a `--session` argument — argv is readable by any same-user
@@ -99,21 +105,28 @@ bw_ensure_session() {
         export BW_SESSION
         return 0
     fi
-    local mp
-    mp=$(secret_get bw-master-password)
-    if [ -z "${mp:-}" ]; then
-        echo "bw: locked and no cached master password. Run bin/bw-login.bash." >&2
+    if [ -n "${BW_NONINTERACTIVE:-}" ] || ! { : </dev/tty; } 2>/dev/null; then
+        echo "bw: vault is locked and nothing here can ask for the master password. Run bwseed from a terminal." >&2
         return 1
     fi
-    local out rc
-    out=$(BW_PASSWORD="$mp" bwx unlock --raw --passwordenv BW_PASSWORD 2>/dev/null)
-    rc=$?
+    local mp=""
+    printf 'Bitwarden master password (empty to skip): ' >/dev/tty
+    IFS= read -rs mp </dev/tty || true # allow EOF without triggering set -e
+    printf '\n' >/dev/tty
+    if [ -z "$mp" ]; then
+        echo "bw: no master password given; the vault stays locked." >&2
+        return 1
+    fi
+    local out rc=0
+    # `|| rc=$?` exempts the assignment from a caller's `set -e`, so the
+    # message below is reached instead of a silent exit.
+    out=$(BW_PASSWORD="$mp" bwx unlock --raw --passwordenv BW_PASSWORD 2>/dev/null) || rc=$?
     unset mp
     # Rust bw 2026.x writes ERROR lines to stdout on unlock failure, so a
     # non-empty $out doesn't prove success. A real session is a single
     # base64-ish line with no whitespace; bail on anything else.
     if [ "$rc" -ne 0 ] || [ -z "$out" ] || [[ "$out" == *[[:space:]]* ]] || [[ "$out" == ERROR* ]]; then
-        echo "bw unlock: cached master password rejected. Re-run bin/bw-login.bash." >&2
+        echo "bw unlock failed (wrong password, network error, or bw binary issue)." >&2
         return 1
     fi
     BW_SESSION="$out"

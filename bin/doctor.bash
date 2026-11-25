@@ -298,16 +298,28 @@ else
     skip "envchain" "not installed"
 fi
 
-# A locked vault makes `bw list folders` block forever, so a wedged autosync
-# from config.fish's _bw_envchain_autosync is invisible until hundreds have
-# piled up (200 had, once). More than a couple at a time means the throttle or
-# the timeout guarding that background job has regressed.
+# A stored Bitwarden unlock secret is readable by every process running as
+# the user, with no prompt. bin/bw-login.bash stored two until it stopped;
+# its header gives the delete command for each platform.
+# shellcheck source=bin/lib/secret-store.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/secret-store.sh"
+for bw_stored in bw-master-password bw-api-credentials; do
+    if secret_get "$bw_stored" >/dev/null 2>&1; then
+        fail "$bw_stored" "still in the secret store (confirm you know the master password, then delete it: see the header of bin/bw-login.bash)"
+    else
+        pass "no stored $bw_stored"
+    fi
+done
+
+# A seed that finds the vault locked once blocked forever, and 200 piled up
+# unseen. Seeds now run only from a terminal, so more than a couple at a
+# time means something is launching them unattended again.
 if command -v pgrep >/dev/null 2>&1; then
     stuck_seeds="$(pgrep -fc 'bw-seed-envchain' 2>/dev/null || echo 0)"
     if ((stuck_seeds <= 2)); then
         pass "no wedged bw-seed-envchain processes"
     else
-        fail "bw-seed-envchain" "$stuck_seeds running at once (kill: pkill -f bw-seed-envchain; then check the timeout in _bw_envchain_autosync)"
+        fail "bw-seed-envchain" "$stuck_seeds running at once (kill: pkill -f bw-seed-envchain; then find what launches it without a terminal)"
     fi
 else
     skip "bw-seed-envchain leak" "pgrep not available"

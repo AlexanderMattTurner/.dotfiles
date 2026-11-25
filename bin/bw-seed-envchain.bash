@@ -7,19 +7,16 @@
 #
 # Auth: bw must already be `bw login`-ed (one-time per machine via
 # bin/bw-login.bash). This script picks up $BW_SESSION if exported, else
-# unlocks via the cached master password (see bin/lib/bw-common.sh).
+# asks for the master password at the terminal (see bin/lib/bw-common.sh).
+# It cannot run unattended: nothing stores the master password.
 #
 # Flags:
-#   --quiet   suppress per-item output (used by shell-startup autosync).
+#   --quiet   suppress per-item output.
 
 set -euo pipefail
 
 _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DOTFILES_DIR="${DOTFILES_DIR:-$(git -C "$_self_dir" rev-parse --show-toplevel)}"
-# This script authenticates entirely from the cached master password, so it
-# has no use for a prompt — and config.fish runs it backgrounded at shell
-# startup, where a prompt blocks forever instead of failing. See bwx().
-export BW_NONINTERACTIVE=1
 # shellcheck source=bin/lib/bw-common.sh disable=SC1091
 # bw-common.sh transitively sources bin/lib/secret-store.sh, which defines
 # secret_store_required_cmd used below.
@@ -30,7 +27,7 @@ for arg in "$@"; do
     case "$arg" in
     --quiet) QUIET=1 ;;
     -h | --help)
-        sed -n 's/^# \{0,1\}//p' "$0" | head -n 14
+        sed -n 's/^# \{0,1\}//p' "$0" | head -n 15
         exit 0
         ;;
     esac
@@ -42,6 +39,9 @@ err() { echo "$@" >&2; }
 bw_require_cmds "$BW_CMD" jq envchain "$(secret_store_required_cmd)" awk || exit 1
 bw_require_logged_in || exit 1
 bw_ensure_session || exit 1
+# The one prompt this script wants is behind it. From here a bw call that
+# finds the session expired must fail, not ask again per item. See bwx().
+export BW_NONINTERACTIVE=1
 keychain_ensure_unlocked || exit 1 # envchain writes need an unlocked Keychain on macOS
 
 bwx sync >/dev/null 2>&1 || true

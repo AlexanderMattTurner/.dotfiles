@@ -23,7 +23,7 @@ git clone https://github.com/alexander-turner/.dotfiles ~/.dotfiles && cd ~/.dot
 6. Overrides `rm` in favor of the reversible `tp` (`trash-put`) command. No more accidentally permanently deleting crucial files!
 7. Installs `tmux` with the `tmux-restore` and `tmux-continuum` plugins. Basically, this means that your `tmux` sessions will be saved and restored automatically. No more losing your work when your computer crashes!
 8. Uses `mosh` as the default for remote connections via the fish `ms` function. Mosh provides predictive local echo (no lag on keystrokes) and seamless roaming across network changes. `ms` falls back to real `ssh` when `mosh` isn't installed.
-9. Installs `envchain` (OS Keychain at runtime) plus the [Bitwarden CLI](https://bitwarden.com/help/cli/) for cross-machine secret sync. API keys live encrypted in your Bitwarden vault; a background sync at shell startup pulls updates into envchain so wrappers like `npm`, `rclone`, `twine`, and `aider_venice` stay zero-prompt at runtime.
+9. Installs `envchain` (OS Keychain at runtime) plus the [Bitwarden CLI](https://bitwarden.com/help/cli/) for cross-machine secret sync. API keys live encrypted in your Bitwarden vault; `bwseed` asks for the master password and pulls updates into envchain so wrappers like `npm`, `rclone`, `twine`, and `aider_venice` stay zero-prompt at runtime.
 10. Configures open source AI-powered development tools, with inference routed through [Venice](https://venice.ai) for end-to-end encryption between client and inference:
 
     - Automatic commit message generation,
@@ -130,7 +130,7 @@ On the next `setup.bash` run (or directly via `bin/gh-auth-from-bw.bash`), `gh a
 ### Threat model
 
 - Vault decryption requires the master password. A stolen API key without it gets only the encrypted vault.
-- The cached master password in macOS Keychain has the same protection envchain values themselves do — Keychain ACL + GUI-login-time unlock.
+- The master password is never stored. A Keychain copy would be readable by every process running as you, so `bwseed` asks for it each time.
 - Secret values never appear on any process's argv: every helper pipes values stdin→stdin between bw, envchain, and child commands.
 
 ## Defense against accidental leaks
