@@ -9,9 +9,10 @@ nobody can type the password.
 """
 
 import os
-import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO = Path(
     subprocess.check_output(
@@ -74,21 +75,36 @@ def test_unattended_caller_fails_and_reads_no_stored_secret(tmp_path: Path) -> N
     assert calls == "", f"an unattended caller must not consult bw or a secret store, got: {calls}"
 
 
-def test_no_script_stores_a_secret() -> None:
-    """`secret_set` is how the master password and API key reached the Keychain."""
-    scripts = [
-        REPO / "setup.bash",
-        *(REPO / "bin").glob("*.bash"),
-        *(REPO / "bin" / "lib").glob("*.sh"),
-    ]
-    assert scripts, "glob found no shell scripts under bin/"
-    call = re.compile(r"^\s*secret_set\s+\S", re.MULTILINE)
-    offenders = [
-        str(p.relative_to(REPO))
-        for p in scripts
-        if p.name != "secret-store.sh" and call.search(p.read_text())
-    ]
-    assert not offenders, f"secret_set call in {offenders}; nothing may cache a Bitwarden unlock secret"
+@pytest.mark.parametrize(
+    "stub_body,expected_rc",
+    [
+        ("exit 0", 0),
+        ("echo 'The specified item could not be found in the keychain.' >&2; exit 44", 1),
+        ("echo 'User interaction is not allowed.' >&2; exit 36", 2),
+    ],
+    ids=["present", "absent", "locked"],
+)
+def test_secret_exists_tells_absent_from_unanswered(tmp_path: Path, stub_body: str, expected_rc: int) -> None:
+    """doctor must not report 'no stored master password' off a locked Keychain,
+    and must never ask `security` for the value (-w) to learn an item exists."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    argv_log = tmp_path / "argv.log"
+    stub = bindir / "security"
+    stub.write_text(f'#!/bin/bash\nprintf \'%s\\n\' "$@" >> "{argv_log}"\n{stub_body}\n')
+    stub.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-c", f'source "{REPO}/bin/lib/secret-store.sh"; secret_exists bw-master-password'],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "USER": "tester",
+            "DOTFILES_SECRET_BACKEND": "security",
+        },
+    )
+    assert result.returncode == expected_rc
+    assert "-w" not in argv_log.read_text().splitlines()
 
 
 def test_fish_config_runs_no_background_seed() -> None:

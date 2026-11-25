@@ -76,7 +76,7 @@ unlock_and_seed() {
     if ! bw_ensure_session; then
         echo "Logged in but skipping the initial seed."
         echo "Run later: bash $DOTFILES_DIR/bin/bw-seed-envchain.bash"
-        return 0
+        return 1
     fi
     bash "$DOTFILES_DIR/bin/bw-seed-envchain.bash"
     echo "bw login + initial envchain seed complete."

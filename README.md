@@ -119,13 +119,13 @@ Two layers, both encrypted, complementary roles:
 
 ### GitHub CLI auth via Bitwarden
 
-`setup.bash` authenticates `gh` non-interactively when a PAT is stored in the vault as `envchain/github/PAT`. Generate a token at <https://github.com/settings/tokens> (scopes: `repo`, `read:org` — add `admin:public_key` only if you want `gh` to upload your SSH key for you), then:
+`setup.bash` authenticates `gh` when a PAT is stored in the vault as `envchain/github/PAT`. Generate a token at <https://github.com/settings/tokens> (scopes: `repo`, `read:org` — add `admin:public_key` only if you want `gh` to upload your SSH key for you), then:
 
 ```bash
 bin/bw-add-secret.bash github PAT
 ```
 
-On the next `setup.bash` run (or directly via `bin/gh-auth-from-bw.bash`), `gh auth login --with-token` picks it up. No browser, no SSH-key-upload step — useful on headless boxes.
+On the next `setup.bash` run (or directly via `bin/gh-auth-from-bw.bash`), `gh auth login --with-token` picks it up after asking for the master password. No browser, no SSH-key-upload step.
 
 ### Threat model
 

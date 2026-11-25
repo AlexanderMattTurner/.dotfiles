@@ -1,26 +1,22 @@
 # shellcheck shell=bash
-# Cross-platform secret storage wrapper.
+# Cross-platform probe of the OS secret store.
 #
 # Backends, in detection order:
 #   security    — macOS Keychain. Auto-unlocked at GUI login.
 #   secret-tool — Linux libsecret (gnome-keyring / kwallet via D-Bus).
 #                 Selected only if a probe call to the daemon succeeds.
-#   file        — Headless fallback: $XDG_CONFIG_HOME/dotfiles/secrets/<svc>,
-#                 mode 0600 in a 0700 directory. FS perms only — no
-#                 encryption at rest. Acceptable on a single-user box where
-#                 the disk is already trusted; not acceptable on shared
-#                 hosts.
+#   file        — Headless fallback: $XDG_CONFIG_HOME/dotfiles/secrets/<svc>.
 #
 # Override detection by setting DOTFILES_SECRET_BACKEND to one of the names
-# above. Items are keyed by ($service, $USER). Values transit only stdin
-# (security via `-i` interactive mode; secret-tool) or a temp file → atomic
-# mv (file) — never argv, never logged.
+# above. Items are keyed by ($service, $USER).
+#
+# This library only answers "does an item exist". It used to store and read
+# the Bitwarden master password and API key; nothing writes here any more,
+# because every process running as the user can read such an item back.
+# bin/doctor.bash uses secret_exists to find the items older versions left.
 
 SECRET_STORE_BACKEND=""
 SECRET_STORE_FILE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/secrets"
-
-# shellcheck source=bin/lib/security-cmd.sh disable=SC1091
-source "${BASH_SOURCE[0]%/*}/security-cmd.sh"
 
 # Pick a backend exactly once per shell. Cached in $SECRET_STORE_BACKEND.
 secret_store_init() {
@@ -58,98 +54,26 @@ secret_store_init() {
     SECRET_STORE_BACKEND="file"
 }
 
-# Print the platform-appropriate command name for `bw_require_cmds` checks.
-# Empty string for the file backend (no external command needed).
-secret_store_required_cmd() {
+# secret_exists <service> — 0 if an item exists, 1 if it does not, 2 if the
+# store could not answer (a locked Keychain refuses even a lookup). Never
+# reads the value: the security backend asks for attributes only.
+secret_exists() {
     secret_store_init
-    case "$SECRET_STORE_BACKEND" in
-    security) printf 'security\n' ;;
-    secret-tool) printf 'secret-tool\n' ;;
-    file) printf '\n' ;;
-    esac
-}
-
-_secret_set_file() {
-    local service="$1" value="$2"
-    mkdir -p "$SECRET_STORE_FILE_DIR"
-    chmod 0700 "$SECRET_STORE_FILE_DIR"
-    local tmp
-    tmp=$(mktemp "$SECRET_STORE_FILE_DIR/.tmp.XXXXXX")
-    chmod 0600 "$tmp"
-    printf '%s' "$value" >"$tmp"
-    mv "$tmp" "$SECRET_STORE_FILE_DIR/$service"
-}
-
-_secret_get_file() {
-    local path="$SECRET_STORE_FILE_DIR/$1"
-    [ -f "$path" ] || return 1
-    cat "$path"
-}
-
-_secret_delete_file() {
-    rm -f "$SECRET_STORE_FILE_DIR/$1"
-}
-
-# secret_set <service> <value> — overwrites any existing entry.
-secret_set() {
-    secret_store_init
-    local service="$1" value="$2"
+    local service="$1" out
     case "$SECRET_STORE_BACKEND" in
     security)
-        # security_build_line refuses newline-bearing arguments (the `-i`
-        # protocol is line-oriented); surface that as a set failure rather
-        # than silently storing a truncated secret.
-        local line
-        if ! line=$(security_build_line add-generic-password \
-            -s "$service" -a "$USER" -U -w "$value"); then
-            return 1
-        fi
-        printf '%s\n' "$line" | security -i >/dev/null
+        out=$(security find-generic-password -s "$service" -a "$USER" 2>&1 >/dev/null) && return 0
+        [[ "$out" == *"could not be found"* ]] && return 1
+        return 2
         ;;
     secret-tool)
-        printf '%s' "$value" | secret-tool store \
-            --label="$service" service "$service" account "$USER"
+        secret-tool lookup service "$service" account "$USER" >/dev/null 2>&1
         ;;
     file)
-        _secret_set_file "$service" "$value"
+        [ -f "$SECRET_STORE_FILE_DIR/$service" ]
         ;;
-    esac
-}
-
-# secret_get <service> — echoes value to stdout; nonzero if missing.
-secret_get() {
-    secret_store_init
-    local service="$1"
-    case "$SECRET_STORE_BACKEND" in
-    security)
-        security find-generic-password -s "$service" -a "$USER" -w \
-            2>/dev/null
-        ;;
-    secret-tool)
-        secret-tool lookup service "$service" account "$USER" \
-            2>/dev/null
-        ;;
-    file)
-        _secret_get_file "$service"
-        ;;
-    esac
-}
-
-# secret_delete <service> — removes the entry if present.
-secret_delete() {
-    secret_store_init
-    local service="$1"
-    case "$SECRET_STORE_BACKEND" in
-    security)
-        security delete-generic-password -s "$service" -a "$USER" \
-            >/dev/null 2>&1
-        ;;
-    secret-tool)
-        secret-tool clear service "$service" account "$USER" \
-            2>/dev/null
-        ;;
-    file)
-        _secret_delete_file "$service"
+    *)
+        return 2
         ;;
     esac
 }

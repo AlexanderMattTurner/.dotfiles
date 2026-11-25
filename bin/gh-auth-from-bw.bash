@@ -1,5 +1,6 @@
 #!/bin/bash
-# Authenticate `gh` non-interactively using a PAT stored in Bitwarden.
+# Authenticate `gh` using a PAT stored in Bitwarden. Asks for the master
+# password unless $BW_SESSION is already exported.
 #
 # Looks up the Login item `envchain/github/PAT` (created via
 # `bin/bw-add-secret.bash github PAT`) in the unlocked vault and pipes its

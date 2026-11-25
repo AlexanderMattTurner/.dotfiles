@@ -14,8 +14,6 @@
 # All functions return non-zero on failure. Callers should `|| exit` after
 # each call (or rely on `set -e`).
 
-# shellcheck source=bin/lib/secret-store.sh disable=SC1091
-source "${BASH_SOURCE[0]%/*}/secret-store.sh"
 # shellcheck source=bin/lib/keychain.sh disable=SC1091
 source "${BASH_SOURCE[0]%/*}/keychain.sh"
 
@@ -23,8 +21,9 @@ source "${BASH_SOURCE[0]%/*}/keychain.sh"
 # a fallback — it has session/output quirks these scripts can't dodge.
 BW_CMD="${BW_CMD:-bw-node}"
 
-# Run bw, adding --nointeraction when the caller declared itself unattended
-# by exporting BW_NONINTERACTIVE=1 before sourcing this file.
+# Run bw, adding --nointeraction once the caller has declared itself
+# unattended by exporting BW_NONINTERACTIVE=1. The variable is read on each
+# call, so a script may export it after its one unlock prompt.
 #
 # Without that flag, a bw subcommand that finds the vault locked or the
 # session expired falls back to prompting for the master password on stdin.
@@ -46,9 +45,7 @@ bwx() {
 
 # Verify the required external commands are on PATH. Usage:
 #   bw_require_cmds bw jq envchain security
-# Empty arguments are skipped — callers can splice in
-# `$(secret_store_required_cmd)`, which is empty when the file backend is
-# in use (no external command needed).
+# Empty arguments are skipped.
 bw_require_cmds() {
     local missing=()
     local cmd
@@ -111,7 +108,12 @@ bw_ensure_session() {
     fi
     local mp=""
     printf 'Bitwarden master password (empty to skip): ' >/dev/tty
+    # read -rs turns echo off; the traps turn it back on if a signal lands
+    # mid-read (bash's restore-on-signal isn't guaranteed across versions).
+    trap 'stty echo </dev/tty 2>/dev/null; exit 130' INT
+    trap 'stty echo </dev/tty 2>/dev/null; exit 143' TERM
     IFS= read -rs mp </dev/tty || true # allow EOF without triggering set -e
+    trap - INT TERM
     printf '\n' >/dev/tty
     if [ -z "$mp" ]; then
         echo "bw: no master password given; the vault stays locked." >&2

@@ -304,11 +304,13 @@ fi
 # shellcheck source=bin/lib/secret-store.sh disable=SC1091
 source "$DOTFILES_DIR/bin/lib/secret-store.sh"
 for bw_stored in bw-master-password bw-api-credentials; do
-    if secret_get "$bw_stored" >/dev/null 2>&1; then
-        fail "$bw_stored" "still in the secret store (confirm you know the master password, then delete it: see the header of bin/bw-login.bash)"
-    else
-        pass "no stored $bw_stored"
-    fi
+    bw_stored_rc=0
+    secret_exists "$bw_stored" || bw_stored_rc=$?
+    case "$bw_stored_rc" in
+    0) fail "$bw_stored" "still in the secret store (confirm you know the master password, then delete it: see the header of bin/bw-login.bash)" ;;
+    1) pass "no stored $bw_stored" ;;
+    *) skip "$bw_stored" "secret store did not answer; unlock the Keychain and rerun" ;;
+    esac
 done
 
 # A seed that finds the vault locked once blocked forever, and 200 piled up

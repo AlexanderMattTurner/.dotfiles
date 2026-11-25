@@ -18,8 +18,6 @@ set -euo pipefail
 _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DOTFILES_DIR="${DOTFILES_DIR:-$(git -C "$_self_dir" rev-parse --show-toplevel)}"
 # shellcheck source=bin/lib/bw-common.sh disable=SC1091
-# bw-common.sh transitively sources bin/lib/secret-store.sh, which defines
-# secret_store_required_cmd used below.
 source "$DOTFILES_DIR/bin/lib/bw-common.sh"
 
 QUIET=0
@@ -27,7 +25,7 @@ for arg in "$@"; do
     case "$arg" in
     --quiet) QUIET=1 ;;
     -h | --help)
-        sed -n 's/^# \{0,1\}//p' "$0" | head -n 15
+        sed -n 's/^# \{0,1\}//p' "$0" | head -n 14
         exit 0
         ;;
     esac
@@ -36,7 +34,7 @@ done
 log() { [ "$QUIET" -eq 1 ] || echo "$@"; }
 err() { echo "$@" >&2; }
 
-bw_require_cmds "$BW_CMD" jq envchain "$(secret_store_required_cmd)" awk || exit 1
+bw_require_cmds "$BW_CMD" jq envchain awk || exit 1
 bw_require_logged_in || exit 1
 bw_ensure_session || exit 1
 # The one prompt this script wants is behind it. From here a bw call that
