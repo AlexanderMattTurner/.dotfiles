@@ -313,6 +313,14 @@ for bw_stored in bw-master-password bw-api-credentials; do
     esac
 done
 
+# bin/lib/keychain.sh once cached the macOS login password in this file so a
+# headless Mac could unlock its Keychain unattended.
+if [ -e "$HOME/.config/dotfiles/keychain-password" ]; then
+    fail "keychain-password" "plain-text login password at ~/.config/dotfiles/keychain-password (delete it: command rm ~/.config/dotfiles/keychain-password)"
+else
+    pass "no cached login password"
+fi
+
 # A seed that finds the vault locked once blocked forever, and 200 piled up
 # unseen. Seeds now run only from a terminal, so more than a couple at a
 # time means something is launching them unattended again.

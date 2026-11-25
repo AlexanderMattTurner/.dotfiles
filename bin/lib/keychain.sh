@@ -5,8 +5,9 @@
 # boot, so without this `envchain --set` fails with errSecInteractionNotAllowed
 # (rc -25308). No-op on non-macOS.
 #
-# Caches the keychain password at $HOME/.config/dotfiles/keychain-password
-# (mode 0600 in a 0700 dir) so subsequent runs unlock without prompting.
+# The login password is asked for each time and never written down. A
+# cached copy would be a plain file any process running as the user can
+# read, and the login password opens every item in the Keychain.
 
 # shellcheck source=bin/lib/security-cmd.sh disable=SC1091
 source "${BASH_SOURCE[0]%/*}/security-cmd.sh"
@@ -15,7 +16,7 @@ _keychain_unlock() {
     local pw="$1" kc="$2" line
     # security_build_line rejects newline-bearing arguments before emitting
     # anything; treat that as an unlock failure (the password only ever comes
-    # from a single-line `read -rs` or cache file, so this is defense in depth).
+    # from a single-line `read -rs`, so this is defense in depth).
     if ! line=$(security_build_line unlock-keychain -p "$pw" "$kc"); then
         return 1
     fi
@@ -33,32 +34,17 @@ keychain_ensure_unlocked() {
         return 0
     fi
 
-    local cache="$HOME/.config/dotfiles/keychain-password"
-    local pw
-    if [ -f "$cache" ]; then
-        pw=$(cat "$cache")
-        if _keychain_unlock "$pw" "$kc"; then
-            unset pw
-            security set-keychain-settings "$kc" 2>/dev/null || true
-            return 0
-        fi
-        unset pw
-        # Stale cache — fall through to interactive prompt.
-    fi
-
     if [ ! -t 0 ]; then
-        echo "keychain: locked and no usable cache at $cache (non-interactive shell)" >&2
+        echo "keychain: locked, and no terminal to ask for the login password" >&2
         return 1
     fi
 
+    local pw
     printf 'macOS keychain is locked. Enter login password to unlock: ' >&2
     IFS= read -rs pw || pw=""
     printf '\n' >&2
 
     if _keychain_unlock "$pw" "$kc"; then
-        mkdir -p "$(dirname "$cache")"
-        chmod 0700 "$(dirname "$cache")"
-        (umask 077 && printf '%s' "$pw" >"$cache")
         unset pw
         security set-keychain-settings "$kc" 2>/dev/null || true
         return 0
