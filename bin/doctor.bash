@@ -298,16 +298,38 @@ else
     skip "envchain" "not installed"
 fi
 
-# A locked vault makes `bw list folders` block forever, so a wedged autosync
-# from config.fish's _bw_envchain_autosync is invisible until hundreds have
-# piled up (200 had, once). More than a couple at a time means the throttle or
-# the timeout guarding that background job has regressed.
+# A stored Bitwarden unlock secret is readable by every process running as
+# the user, with no prompt. bin/bw-login.bash stored two until it stopped;
+# its header gives the delete command for each platform.
+# shellcheck source=bin/lib/secret-store.sh disable=SC1091
+source "$DOTFILES_DIR/bin/lib/secret-store.sh"
+for bw_stored in bw-master-password bw-api-credentials; do
+    bw_stored_rc=0
+    secret_exists "$bw_stored" || bw_stored_rc=$?
+    case "$bw_stored_rc" in
+    0) fail "$bw_stored" "still in the secret store (confirm you know the master password, then delete it: see the header of bin/bw-login.bash)" ;;
+    1) pass "no stored $bw_stored" ;;
+    *) skip "$bw_stored" "secret store did not answer; unlock the Keychain and rerun" ;;
+    esac
+done
+
+# bin/lib/keychain.sh once cached the macOS login password in this file so a
+# headless Mac could unlock its Keychain unattended.
+if [ -e "$HOME/.config/dotfiles/keychain-password" ]; then
+    fail "keychain-password" "plain-text login password at ~/.config/dotfiles/keychain-password (delete it: command rm ~/.config/dotfiles/keychain-password)"
+else
+    pass "no cached login password"
+fi
+
+# A seed that finds the vault locked once blocked forever, and 200 piled up
+# unseen. Seeds now run only from a terminal, so more than a couple at a
+# time means something is launching them unattended again.
 if command -v pgrep >/dev/null 2>&1; then
     stuck_seeds="$(pgrep -fc 'bw-seed-envchain' 2>/dev/null || echo 0)"
     if ((stuck_seeds <= 2)); then
         pass "no wedged bw-seed-envchain processes"
     else
-        fail "bw-seed-envchain" "$stuck_seeds running at once (kill: pkill -f bw-seed-envchain; then check the timeout in _bw_envchain_autosync)"
+        fail "bw-seed-envchain" "$stuck_seeds running at once (kill: pkill -f bw-seed-envchain; then find what launches it without a terminal)"
     fi
 else
     skip "bw-seed-envchain leak" "pgrep not available"

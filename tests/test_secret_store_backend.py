@@ -13,7 +13,6 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
 
 REPO = Path(
     subprocess.check_output(
@@ -120,24 +119,3 @@ def test_probe_rc1_with_error_output_falls_back_to_file(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "backend,expected",
-    [("security", "security"), ("secret-tool", "secret-tool"), ("file", "")],
-)
-def test_required_cmd_maps_backend_to_command(
-    tmp_path: Path, backend: str, expected: str
-) -> None:
-    """secret_store_required_cmd feeds bw_require_cmds; the file backend needs
-    no external command, so it must print an empty string (not 'file')."""
-    result = subprocess.run(
-        ["bash", "-c", f'source "{SECRET_STORE_SH}"\nsecret_store_required_cmd'],
-        env={
-            **os.environ,
-            "DOTFILES_SECRET_BACKEND": backend,
-            "USER": "tester",
-        },
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert result.stdout.strip() == expected

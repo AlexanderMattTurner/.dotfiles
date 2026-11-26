@@ -84,7 +84,6 @@ def _run(tmp_path: Path, items: list, *, fill_empty: bool, secret: str = "s3cret
             **os.environ,
             "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
             "DOTFILES_DIR": str(REPO),
-            "DOTFILES_SECRET_BACKEND": "file",  # keeps secret_store_required_cmd empty
             "BW_SESSION": "fake-session-so-unlock-is-skipped",
             "BW_ITEMS": str(items_file),
             "BW_FOLDER_ID": FOLDER_ID,

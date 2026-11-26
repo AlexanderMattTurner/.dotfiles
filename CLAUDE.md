@@ -174,6 +174,17 @@ installable from the session by hand.
 - Bitwarden vault is the cross-machine source of truth; envchain is the
   per-machine runtime cache (auto-unlocked via macOS Keychain at GUI
   login). Don't add a third secrets layer.
+- **Nothing stores the Bitwarden master password or API key.**
+  `bw_ensure_session` asks at the terminal, so there is no background
+  sync: `bwseed` is the only path from vault to envchain. The master
+  password used to sit in the Keychain as `bw-master-password`, where any
+  process running as the user could read it with no prompt (`security
+  find-generic-password -w`); beside the vault file bw keeps on disk, that
+  is the whole vault. `doctor.bash` FAILs while that item or
+  `bw-api-credentials` exists. Don't reintroduce a cache or an unattended
+  seed. Unattended sync needs a credential that can read only the
+  envchain secrets (a Bitwarden Secrets Manager machine token), never the
+  master password.
 - Namespaces consumed by wrappers, so you know what to seed: `ai`
   (`VENICE_INFERENCE_KEY`, `ANTHROPIC_API_KEY`), `npm`, `cloudflare`,
   `pypi`, `duplicati` (the settings-encryption key that decrypts the

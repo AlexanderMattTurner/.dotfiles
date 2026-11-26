@@ -19,8 +19,6 @@ set -euo pipefail
 _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 DOTFILES_DIR="${DOTFILES_DIR:-$(git -C "$_self_dir" rev-parse --show-toplevel)}"
 # shellcheck source=bin/lib/bw-common.sh disable=SC1091
-# bw-common.sh transitively sources bin/lib/secret-store.sh, which defines
-# secret_store_required_cmd used below.
 source "$DOTFILES_DIR/bin/lib/bw-common.sh"
 
 FILL_EMPTY=0
@@ -34,7 +32,7 @@ for arg in "$@"; do
     esac
 done
 
-bw_require_cmds "$BW_CMD" jq envchain awk "$(secret_store_required_cmd)" || exit 1
+bw_require_cmds "$BW_CMD" jq envchain awk || exit 1
 bw_require_logged_in || exit 1
 bw_ensure_session || exit 1
 keychain_ensure_unlocked || exit 1 # envchain reads need the Keychain unlocked too

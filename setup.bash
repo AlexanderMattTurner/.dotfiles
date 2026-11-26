@@ -163,9 +163,8 @@ retry 3 10 brew bundle --quiet --file="$DOTFILES_DIR/Brewfile" ||
 
 # Bitwarden CLI bootstrap. Bitwarden is the cross-machine source of truth
 # for secrets; envchain is the local runtime cache. We use the personal
-# API key flow (so WebAuthn-only accounts work) and stash both the API
-# credentials and the master password in macOS Keychain so the seeder
-# can run unattended at shell startup.
+# API key flow (so WebAuthn-only accounts work). Neither the API key nor
+# the master password is stored; `bwseed` asks for the master password.
 #
 # All prompts inside bw-login.bash are skippable (empty input).
 if command_exists bw-node && [ -t 0 ]; then

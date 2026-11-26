@@ -1,9 +1,8 @@
 """Regression test: macOS Keychain secrets must not transit argv.
 
-`security add-generic-password -w "$value"` and
-`security unlock-keychain -p "$pw"` used to put plaintext secrets on the
+`security unlock-keychain -p "$pw"` used to put a plaintext secret on the
 process argv (visible to any local user via `ps -eo args`). The fix
-routes both calls through `security -i` (interactive mode reading from
+routes the call through `security -i` (interactive mode reading from
 stdin). These tests stub `security` to record its argv and stdin and
 assert the secret stays on the stdin side of the divide.
 """
@@ -52,29 +51,6 @@ def _argv_tokens(argv_log: Path) -> list[str]:
     return argv_log.read_text().splitlines()
 
 
-def test_secret_set_security_backend_does_not_leak_value_to_argv(tmp_path: Path) -> None:
-    argv_log, stdin_log = _make_security_stub(tmp_path)
-    secret = "s3cret-tokn-DO-NOT-LEAK-9f8e7d"
-
-    env = {
-        **os.environ,
-        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
-        "DOTFILES_SECRET_BACKEND": "security",
-        "USER": "tester",
-    }
-    _bash(
-        f'source "{REPO}/bin/lib/secret-store.sh"\n'
-        f'secret_set my-service {secret!r}\n',
-        env,
-    )
-
-    argv = _argv_tokens(argv_log)
-    stdin_text = stdin_log.read_text()
-    assert all(secret not in tok for tok in argv), f"secret leaked to argv: {argv!r}"
-    assert argv == ["-i"], f"expected exactly `security -i`, got: {argv!r}"
-    assert secret in stdin_text, f"secret missing from stdin: {stdin_text!r}"
-
-
 def test_keychain_unlock_does_not_leak_password_to_argv(tmp_path: Path) -> None:
     argv_log, stdin_log = _make_security_stub(tmp_path)
     password = "p@ssw0rd-DO-NOT-LEAK-1a2b3c"
@@ -118,13 +94,14 @@ def test_keychain_unlock_propagates_failure_exit_code(tmp_path: Path) -> None:
 
 
 def test_keychain_unlock_rejects_newline_password(tmp_path: Path) -> None:
-    """Same line-oriented-parser hazard as secret_set: a raw newline in the
+    """`security -i` reads one command per line, so a raw newline in the
     password can't reach `security -i` safely (it would either truncate the
     command or be read back as a separate one). _keychain_unlock must refuse
     it rather than pass it through — assert security is never even invoked."""
     argv_log, stdin_log = _make_security_stub(tmp_path)
-    # Passed via env var, not interpolated into the bash source string: see
-    # test_secret_set_security_backend_rejects_newline_value for why.
+    # Passed via env var, not interpolated into the bash source string: a
+    # Python repr would write the newline as a backslash escape that bash
+    # never turns back into a real newline.
     smuggled = "legit-part\ndelete-generic-password -s bw-master-password -a tester"
 
     env = {
@@ -168,69 +145,12 @@ def test_bw_session_never_on_argv() -> None:
     )
 
 
-def test_security_quote_escapes_backslash_and_double_quote(tmp_path: Path) -> None:
-    """Values containing " or \\ must round-trip through `security -i`'s parser."""
-    argv_log, stdin_log = _make_security_stub(tmp_path)
-    # A value the naive `printf '"%s"'` would mis-quote without escaping.
-    tricky = 'has "quote" and \\backslash inside'
-
-    env = {
-        **os.environ,
-        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
-        "DOTFILES_SECRET_BACKEND": "security",
-        "USER": "tester",
-    }
-    _bash(
-        f'source "{REPO}/bin/lib/secret-store.sh"\n'
-        f'secret_set my-service {tricky!r}\n',
-        env,
-    )
-
-    stdin_text = stdin_log.read_text()
-    # Stdin should contain the escaped form: \" and \\ inside double quotes.
-    assert r'\"quote\"' in stdin_text, f"unexpected stdin: {stdin_text!r}"
-    assert r'\\backslash' in stdin_text, f"unexpected stdin: {stdin_text!r}"
-
-
-def test_secret_set_security_backend_rejects_newline_value(tmp_path: Path) -> None:
-    """`security -i` parses one command per line, so a raw newline in the
-    value can't be embedded safely — it would either truncate the command or
-    be read back as a separate one. secret_set must refuse rather than pass a
-    newline-containing value through to `security -i` — assert the value never
-    reaches security at all (neither argv nor stdin log is written)."""
-    argv_log, stdin_log = _make_security_stub(tmp_path)
-    # Passed via env var, not interpolated into the bash source string:
-    # Python's repr() of an embedded "\n" prints the two-character escape
-    # "\n" (harmless inside bash single-quotes), not a real newline byte —
-    # only an env var reliably carries the actual byte through to bash.
-    smuggled = "legit-part\ndelete-generic-password -s my-service -a tester"
-
-    env = {
-        **os.environ,
-        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
-        "DOTFILES_SECRET_BACKEND": "security",
-        "USER": "tester",
-        "SMUGGLED_VALUE": smuggled,
-    }
-    result = _bash(
-        f'source "{REPO}/bin/lib/secret-store.sh"\n'
-        'secret_set my-service "$SMUGGLED_VALUE"\n',
-        env,
-        check=False,
-    )
-
-    assert result.returncode != 0, "secret_set must fail on a newline-containing value"
-    assert not argv_log.exists(), "security must never be invoked with a truncated/injected value"
-    assert not stdin_log.exists(), "security must never be invoked with a truncated/injected value"
-
-
 # ── Shared `security -i` line-builder (bin/lib/security-cmd.sh, issue #126) ──
 #
 # The quoting + newline-rejection logic used to be copy-pasted into
 # secret-store.sh and keychain.sh (that duplication is what let the newline
 # gap re-open in #125). It now lives in one shared helper; these exercise it
-# directly and assert the duplication is gone. secret_set's own newline refusal
-# is covered by test_secret_set_security_backend_rejects_newline_value above.
+# directly and assert the duplication is gone.
 
 SECURITY_CMD_SH = REPO / "bin" / "lib" / "security-cmd.sh"
 
