@@ -426,36 +426,8 @@ if status is-interactive; and type -q bw
     _bw_envchain_autosync 2>/dev/null
 end
 
-# Egress VPN is the Mullvad app — never a Tailscale exit node, whose teardown
-# deletes the physical default route (CLAUDE.md "VPN"). The app bundles its
-# CLI off PATH; bin/lib/mullvad.sh is the bash-side resolver of the same path.
-function mullvad --description 'Mullvad VPN app CLI'
-    set -l cli "/Applications/Mullvad VPN.app/Contents/Resources/mullvad"
-    if not test -x $cli
-        echo "mullvad: Mullvad VPN.app not installed (brew install --cask mullvad-vpn)" >&2
-        return 127
-    end
-    $cli $argv
-end
-
-# `brew services start tailscale` registers homebrew.mxcl.tailscale, a second
-# tailscaled that races com.$USER.tailscaled on /var/run/tailscaled.socket and
-# leaves the CLI hitting EPERM (see CLAUDE.md "Tailscale daemon"). Refuse the
-# service-starting forms here: brew rejects the non-sudo attempt and tells you
-# to re-run with sudo, so catching it now stops the footgun before sudo is
-# reached. Caveat: `sudo brew …` runs brew as root and never sees this
-# function — doctor.bash is the backstop that flags the conflict if it lands.
-function brew --wraps brew --description 'Guard against starting homebrew tailscaled'
-    if contains -- services $argv; and contains -- tailscale $argv
-        for action in start run restart load
-            if contains -- $action $argv
-                echo "brew: refusing to start homebrew's tailscale service — it races com.$USER.tailscaled on /var/run/tailscaled.socket." >&2
-                echo "      tailscaled already runs via our LaunchDaemon (egress VPN is the Mullvad app)." >&2
-                return 1
-            end
-        end
-    end
-    command brew $argv
-end
+# Tailscale.app bundles its CLI off PATH (CLAUDE.md "VPN").
+test -x /Applications/Tailscale.app/Contents/MacOS/Tailscale
+and abbr -a tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale
 
 fish_add_path $HOME/go/bin
